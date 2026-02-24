@@ -11,3 +11,12 @@ export {
 export { fetchRSS } from './fetchers/rss';
 export { fetchWebPage } from './fetchers/webpage';
 export { fetchCustom } from './fetchers/custom';
+export {
+  getBackgroundFetcherStatus,
+  startBackgroundFetcher,
+  stopBackgroundFetcher,
+  runBackgroundFetcherLoop,
+  runScheduledFetchTick,
+  createBackgroundFetcherState,
+  isProcessRunning,
+} from './background-fetcher';

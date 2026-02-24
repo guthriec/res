@@ -8,13 +8,18 @@
     "res": "dist/cli.js"
   },
   "scripts": {
-    "build": "tsc",
-    "dev": "tsc --watch",
+    "build": "npx tsc",
+    "dev": "npx tsc --watch",
     "test": "jest",
-    "lint": "tsc --noEmit",
+    "lint": "npx tsc --noEmit",
     "prepublishOnly": "npm run build"
   },
-  "keywords": ["markdown", "rss", "reservoir", "cli"],
+  "keywords": [
+    "markdown",
+    "rss",
+    "reservoir",
+    "cli"
+  ],
   "license": "MIT",
   "dependencies": {
     "commander": "^14.0.3",
@@ -28,6 +33,6 @@
     "@types/turndown": "^5.0.5",
     "jest": "^29.7.0",
     "ts-jest": "^29.2.5",
-    "typescript": "^5.7.3"
+    "typescript": "^5.9.3"
   }
 }

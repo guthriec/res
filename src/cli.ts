@@ -3,6 +3,7 @@ import { Command } from 'commander';
 import * as path from 'path';
 import { Reservoir } from './reservoir';
 import { FetchMethod, RetentionStrategy } from './types';
+import { getBackgroundFetcherStatus, startBackgroundFetcher, stopBackgroundFetcher } from './background-fetcher';
 
 const program = new Command();
 
@@ -35,21 +36,21 @@ const channelCmd = program.command('channel').description('Manage channels');
 channelCmd
   .command('add <name>')
   .description('Add a new channel')
-  .requiredOption('--fetch-method <method>', 'fetch method: rss | web_page | custom')
-  .option('--url <url>', 'URL (for rss or web_page fetch methods)')
-  .option('--script <filename>', 'script filename in scripts/ dir (for custom fetch method)')
+  .requiredOption('--type <type>', 'type: rss | web_page | custom')
+  .option('--url <url>', 'URL (for rss or web_page types)')
+  .option('--script <filename>', 'script filename in scripts/ dir (for custom type)')
   .option('--rate-limit <ms>', 'rate-limit interval in milliseconds')
   .option('--refresh-interval <ms>', 'background refresh interval in milliseconds')
   .option('--retention <strategy>', 'retain_all | retain_unread | retain_none', 'retain_all')
   .option('--dir <path>', 'reservoir directory', process.cwd())
   .action((name: string, opts: {
-    fetchMethod: string; url?: string; script?: string;
+    type: string; url?: string; script?: string;
     rateLimit?: string; refreshInterval?: string; retention: string; dir: string;
   }) => {
     const reservoir = loadReservoir(opts.dir);
     const channel = reservoir.addChannel({
       name,
-      fetchMethod: opts.fetchMethod as FetchMethod,
+      fetchMethod: opts.type as FetchMethod,
       url: opts.url,
       script: opts.script,
       rateLimitInterval: opts.rateLimit !== undefined ? parseInt(opts.rateLimit, 10) : undefined,
@@ -63,7 +64,7 @@ channelCmd
   .command('edit <id>')
   .description('Edit an existing channel')
   .option('--name <name>', 'new channel name')
-  .option('--fetch-method <method>', 'new fetch method: rss | web_page | custom')
+  .option('--type <type>', 'new type: rss | web_page | custom')
   .option('--url <url>', 'new URL')
   .option('--script <filename>', 'new script filename')
   .option('--rate-limit <ms>', 'new rate-limit interval in milliseconds')
@@ -71,13 +72,13 @@ channelCmd
   .option('--retention <strategy>', 'new retention strategy: retain_all | retain_unread | retain_none')
   .option('--dir <path>', 'reservoir directory', process.cwd())
   .action((id: string, opts: {
-    name?: string; fetchMethod?: string; url?: string; script?: string;
+    name?: string; type?: string; url?: string; script?: string;
     rateLimit?: string; refreshInterval?: string; retention?: string; dir: string;
   }) => {
     const reservoir = loadReservoir(opts.dir);
     const updates: Record<string, unknown> = {};
     if (opts.name) updates.name = opts.name;
-    if (opts.fetchMethod) updates.fetchMethod = opts.fetchMethod as FetchMethod;
+    if (opts.type) updates.fetchMethod = opts.type as FetchMethod;
     if (opts.url) updates.url = opts.url;
     if (opts.script) updates.script = opts.script;
     if (opts.rateLimit !== undefined) updates.rateLimitInterval = parseInt(opts.rateLimit, 10);
@@ -114,15 +115,42 @@ channelCmd
     console.log(JSON.stringify(channels, null, 2));
   });
 
-// ─── fetch ───────────────────────────────────────────────────────────────────
+// ─── background fetcher ─────────────────────────────────────────────────────
 
 program
-  .command('fetch <channelId>')
-  .description('Fetch new content for a channel')
+  .command('start')
+  .description('Run background fetching in this process')
   .option('--dir <path>', 'reservoir directory', process.cwd())
-  .action(async (channelId: string, opts: { dir: string }) => {
-    const items = await loadReservoir(opts.dir).fetchChannel(channelId);
-    console.log(`Fetched ${items.length} item(s)`);
+  .action(async (opts: { dir: string }) => {
+    const reservoir = loadReservoir(opts.dir);
+    await startBackgroundFetcher(reservoir.directory, {
+      logger: (message) => console.log(message),
+      errorLogger: (message) => console.error(message),
+    });
+  });
+
+program
+  .command('status')
+  .description('Show background fetching process status')
+  .option('--dir <path>', 'reservoir directory', process.cwd())
+  .action((opts: { dir: string }) => {
+    const dir = path.resolve(opts.dir);
+    const status = getBackgroundFetcherStatus(dir);
+    if (!status.running) {
+      console.log('Background fetcher is not running');
+      return;
+    }
+    console.log(JSON.stringify(status, null, 2));
+  });
+
+program
+  .command('stop')
+  .description('Stop background fetching process')
+  .option('--dir <path>', 'reservoir directory', process.cwd())
+  .action((opts: { dir: string }) => {
+    const dir = path.resolve(opts.dir);
+    const result = stopBackgroundFetcher(dir);
+    console.log(result.message);
   });
 
 // ─── unread ──────────────────────────────────────────────────────────────────
