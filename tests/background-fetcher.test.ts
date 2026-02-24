@@ -8,7 +8,7 @@ import {
   startBackgroundFetcher,
   stopBackgroundFetcher,
 } from '../src/background-fetcher';
-import { Channel, FetchMethod, RetentionStrategy } from '../src/types';
+import { Channel, DEFAULT_REFRESH_INTERVAL_MS, FetchMethod, RetentionStrategy } from '../src/types';
 
 let tmpDir: string;
 
@@ -30,7 +30,7 @@ function mkChannel(overrides: Partial<Channel> = {}): Channel {
     url: overrides.url ?? 'https://example.com/feed',
     script: overrides.script,
     rateLimitInterval: overrides.rateLimitInterval,
-    refreshInterval: overrides.refreshInterval,
+    refreshInterval: overrides.refreshInterval ?? DEFAULT_REFRESH_INTERVAL_MS,
     retentionStrategy: overrides.retentionStrategy ?? RetentionStrategy.RetainAll,
   };
 }
@@ -39,10 +39,7 @@ describe('runScheduledFetchTick', () => {
   it('fetches channels that have refresh intervals configured', async () => {
     const fetchChannel = jest.fn().mockResolvedValue([]);
     const reservoir = {
-      listChannels: () => [
-        mkChannel({ id: 'scheduled', refreshInterval: 1000 }),
-        mkChannel({ id: 'unscheduled' }),
-      ],
+      listChannels: () => [mkChannel({ id: 'scheduled', refreshInterval: 1000 })],
       fetchChannel,
     };
 
@@ -52,6 +49,23 @@ describe('runScheduledFetchTick', () => {
     expect(fetchChannel).toHaveBeenCalledTimes(1);
     expect(fetchChannel).toHaveBeenCalledWith('scheduled');
     expect(state.lastFetchAtByChannel.scheduled).toBeDefined();
+  });
+
+  it('fetches channels using default refresh interval when omitted', async () => {
+    const fetchChannel = jest.fn().mockResolvedValue([]);
+    const reservoir = {
+      listChannels: () => [mkChannel({ id: 'unscheduled' })],
+      fetchChannel,
+    };
+
+    const state = createBackgroundFetcherState();
+    const t0 = new Date('2026-01-01T00:00:00.000Z').getTime();
+
+    await runScheduledFetchTick(reservoir, state, t0);
+    await runScheduledFetchTick(reservoir, state, t0 + 1000);
+
+    expect(fetchChannel).toHaveBeenCalledTimes(1);
+    expect(fetchChannel).toHaveBeenCalledWith('unscheduled');
   });
 
   it('respects polling interval between attempts', async () => {

@@ -7,6 +7,7 @@ import {
   Channel,
   ContentMetadata,
   ContentItem,
+  DEFAULT_REFRESH_INTERVAL_MS,
 } from './types';
 import { fetchRSS } from './fetchers/rss';
 import { fetchWebPage } from './fetchers/webpage';
@@ -18,6 +19,27 @@ const SCRIPTS_DIR = 'scripts';
 const CHANNEL_CONFIG_FILE = 'channel.json';
 const CHANNEL_METADATA_FILE = 'metadata.json';
 const CONTENT_DIR = 'content';
+
+function channelDirectorySlug(name: string): string {
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return slug || 'channel';
+}
+
+function normalizeChannel(rawChannel: Channel | (Omit<Channel, 'refreshInterval'> & { refreshInterval?: number })): Channel {
+  const rawRefresh = rawChannel.refreshInterval;
+  const refreshInterval =
+    typeof rawRefresh === 'number' && Number.isFinite(rawRefresh) && rawRefresh > 0
+      ? rawRefresh
+      : DEFAULT_REFRESH_INTERVAL_MS;
+  return {
+    ...rawChannel,
+    refreshInterval,
+  };
+}
 
 export class Reservoir {
   private readonly dir: string;
@@ -72,8 +94,21 @@ export class Reservoir {
 
   addChannel(config: ChannelConfig): Channel {
     const id = uuidv4();
-    const channel: Channel = { id, createdAt: new Date().toISOString(), ...config };
-    const channelDir = path.join(this.dir, CHANNELS_DIR, id);
+    const channel: Channel = {
+      id,
+      createdAt: new Date().toISOString(),
+      ...config,
+      refreshInterval: config.refreshInterval ?? DEFAULT_REFRESH_INTERVAL_MS,
+    };
+    const channelsDir = path.join(this.dir, CHANNELS_DIR);
+    const baseDirName = channelDirectorySlug(config.name);
+    let channelDirName = baseDirName;
+    let suffix = 2;
+    while (fs.existsSync(path.join(channelsDir, channelDirName))) {
+      channelDirName = `${baseDirName}-${suffix}`;
+      suffix += 1;
+    }
+    const channelDir = path.join(channelsDir, channelDirName);
     fs.mkdirSync(path.join(channelDir, CONTENT_DIR), { recursive: true });
     fs.writeFileSync(path.join(channelDir, CHANNEL_CONFIG_FILE), JSON.stringify(channel, null, 2));
     fs.writeFileSync(path.join(channelDir, CHANNEL_METADATA_FILE), JSON.stringify({ items: [] }, null, 2));
@@ -82,23 +117,25 @@ export class Reservoir {
 
   editChannel(channelId: string, updates: Partial<ChannelConfig>): Channel {
     const existing = this.viewChannel(channelId);
-    const updated: Channel = { ...existing, ...updates };
-    const channelDir = path.join(this.dir, CHANNELS_DIR, channelId);
+    const updated: Channel = normalizeChannel({ ...existing, ...updates });
+    const channelDir = this.resolveChannelDir(channelId);
     fs.writeFileSync(path.join(channelDir, CHANNEL_CONFIG_FILE), JSON.stringify(updated, null, 2));
     return updated;
   }
 
   deleteChannel(channelId: string): void {
-    this.viewChannel(channelId); // ensure exists
-    fs.rmSync(path.join(this.dir, CHANNELS_DIR, channelId), { recursive: true, force: true });
+    const channelDir = this.resolveChannelDir(channelId);
+    fs.rmSync(channelDir, { recursive: true, force: true });
   }
 
   viewChannel(channelId: string): Channel {
-    const configPath = path.join(this.dir, CHANNELS_DIR, channelId, CHANNEL_CONFIG_FILE);
-    if (!fs.existsSync(configPath)) {
-      throw new Error(`Channel not found: ${channelId}`);
+    const configPath = path.join(this.resolveChannelDir(channelId), CHANNEL_CONFIG_FILE);
+    const rawChannel = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Channel;
+    const channel = normalizeChannel(rawChannel);
+    if (rawChannel.refreshInterval !== channel.refreshInterval) {
+      fs.writeFileSync(configPath, JSON.stringify(channel, null, 2));
     }
-    return JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Channel;
+    return channel;
   }
 
   listChannels(): Channel[] {
@@ -109,7 +146,14 @@ export class Reservoir {
       .filter((e) => e.isDirectory())
       .flatMap((e) => {
         try {
-          return [this.viewChannel(e.name)];
+          const configPath = path.join(channelsDir, e.name, CHANNEL_CONFIG_FILE);
+          if (!fs.existsSync(configPath)) return [];
+          const rawChannel = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Channel;
+          const channel = normalizeChannel(rawChannel);
+          if (rawChannel.refreshInterval !== channel.refreshInterval) {
+            fs.writeFileSync(configPath, JSON.stringify(channel, null, 2));
+          }
+          return [channel];
         } catch {
           return [];
         }
@@ -149,7 +193,7 @@ export class Reservoir {
       if (existingIds.has(item.id)) continue;
       const { content, ...meta } = item;
       metadata.items.push(meta);
-      const contentPath = path.join(this.dir, CHANNELS_DIR, channelId, CONTENT_DIR, `${item.id}.md`);
+      const contentPath = path.join(this.resolveChannelDir(channelId), CONTENT_DIR, `${item.id}.md`);
       fs.writeFileSync(contentPath, content);
     }
     this.saveMetadata(channelId, metadata);
@@ -164,7 +208,7 @@ export class Reservoir {
     for (const channel of channels) {
       for (const item of this.loadMetadata(channel.id).items) {
         if (!item.read) {
-          const contentPath = path.join(this.dir, CHANNELS_DIR, channel.id, CONTENT_DIR, `${item.id}.md`);
+          const contentPath = path.join(this.resolveChannelDir(channel.id), CONTENT_DIR, `${item.id}.md`);
           results.push({
             ...item,
             content: fs.existsSync(contentPath) ? fs.readFileSync(contentPath, 'utf-8') : '',
@@ -222,7 +266,7 @@ export class Reservoir {
         if (eligible) {
           candidates.push({
             ...item,
-            filePath: path.join(channelsDir, channel.id, CONTENT_DIR, `${item.id}.md`),
+            filePath: path.join(this.resolveChannelDir(channel.id), CONTENT_DIR, `${item.id}.md`),
           });
         }
       }
@@ -245,16 +289,41 @@ export class Reservoir {
   // ─── Private helpers ──────────────────────────────────────────────────────
 
   private loadMetadata(channelId: string): { items: ContentMetadata[] } {
-    const metaPath = path.join(this.dir, CHANNELS_DIR, channelId, CHANNEL_METADATA_FILE);
+    const metaPath = path.join(this.resolveChannelDir(channelId), CHANNEL_METADATA_FILE);
     if (!fs.existsSync(metaPath)) return { items: [] };
     return JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as { items: ContentMetadata[] };
   }
 
   private saveMetadata(channelId: string, metadata: { items: ContentMetadata[] }): void {
     fs.writeFileSync(
-      path.join(this.dir, CHANNELS_DIR, channelId, CHANNEL_METADATA_FILE),
+      path.join(this.resolveChannelDir(channelId), CHANNEL_METADATA_FILE),
       JSON.stringify(metadata, null, 2),
     );
+  }
+
+  private resolveChannelDir(channelId: string): string {
+    const channelsDir = path.join(this.dir, CHANNELS_DIR);
+    if (!fs.existsSync(channelsDir)) {
+      throw new Error(`Channel not found: ${channelId}`);
+    }
+
+    const entries = fs.readdirSync(channelsDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const candidateDir = path.join(channelsDir, entry.name);
+      const configPath = path.join(candidateDir, CHANNEL_CONFIG_FILE);
+      if (!fs.existsSync(configPath)) continue;
+      try {
+        const channel = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Channel;
+        if (channel.id === channelId) {
+          return candidateDir;
+        }
+      } catch {
+        continue;
+      }
+    }
+
+    throw new Error(`Channel not found: ${channelId}`);
   }
 
   private findItem(contentId: string): { channelId: string; index: number } | null {

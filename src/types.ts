@@ -10,6 +10,8 @@ export enum FetchMethod {
   Custom = 'custom',
 }
 
+export const DEFAULT_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
+
 export interface ReservoirConfig {
   maxSizeMB?: number;
 }
@@ -23,14 +25,15 @@ export interface ChannelConfig {
   script?: string;
   /** Rate-limit interval in milliseconds */
   rateLimitInterval?: number;
-  /** Background refresh interval in milliseconds */
+  /** Background refresh interval in milliseconds (defaults to 24h if omitted) */
   refreshInterval?: number;
   retentionStrategy: RetentionStrategy;
 }
 
-export interface Channel extends ChannelConfig {
+export interface Channel extends Omit<ChannelConfig, 'refreshInterval'> {
   id: string;
   createdAt: string;
+  refreshInterval: number;
 }
 
 export interface ContentMetadata {

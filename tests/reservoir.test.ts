@@ -20,6 +20,21 @@ function makeReservoir(opts: { maxSizeMB?: number } = {}): Reservoir {
   return Reservoir.initialize(tmpDir, opts);
 }
 
+function channelDirForId(channelId: string): string {
+  const channelsDir = path.join(tmpDir, 'channels');
+  const entries = fs.readdirSync(channelsDir, { withFileTypes: true }).filter((entry) => entry.isDirectory());
+  for (const entry of entries) {
+    const dirPath = path.join(channelsDir, entry.name);
+    const configPath = path.join(dirPath, 'channel.json');
+    if (!fs.existsSync(configPath)) continue;
+    const channel = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as { id: string };
+    if (channel.id === channelId) {
+      return dirPath;
+    }
+  }
+  throw new Error(`Channel not found in test helper: ${channelId}`);
+}
+
 function addTestItem(
   reservoir: Reservoir,
   channelId: string,
@@ -35,11 +50,11 @@ function addTestItem(
     url: overrides.url,
   };
   // Write content file
-  const contentDir = path.join(tmpDir, 'channels', channelId, 'content');
+  const contentDir = path.join(channelDirForId(channelId), 'content');
   fs.mkdirSync(contentDir, { recursive: true });
   fs.writeFileSync(path.join(contentDir, `${id}.md`), overrides.content ?? `# ${item.title}`);
   // Update metadata
-  const metaPath = path.join(tmpDir, 'channels', channelId, 'metadata.json');
+  const metaPath = path.join(channelDirForId(channelId), 'metadata.json');
   const meta = fs.existsSync(metaPath)
     ? (JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as { items: ContentMetadata[] })
     : { items: [] };
@@ -119,9 +134,22 @@ describe('addChannel', () => {
       url: 'https://example.com',
       retentionStrategy: RetentionStrategy.RetainAll,
     });
-    expect(fs.existsSync(path.join(tmpDir, 'channels', ch.id, 'content'))).toBe(true);
-    expect(fs.existsSync(path.join(tmpDir, 'channels', ch.id, 'channel.json'))).toBe(true);
-    expect(fs.existsSync(path.join(tmpDir, 'channels', ch.id, 'metadata.json'))).toBe(true);
+    const channelDir = channelDirForId(ch.id);
+    expect(fs.existsSync(path.join(channelDir, 'content'))).toBe(true);
+    expect(fs.existsSync(path.join(channelDir, 'channel.json'))).toBe(true);
+    expect(fs.existsSync(path.join(channelDir, 'metadata.json'))).toBe(true);
+  });
+
+  it('names channel directory from channel name', () => {
+    const res = makeReservoir();
+    const ch = res.addChannel({
+      name: 'My New Feed',
+      fetchMethod: FetchMethod.RSS,
+      url: 'https://example.com/feed',
+      retentionStrategy: RetentionStrategy.RetainAll,
+    });
+    const channelDir = channelDirForId(ch.id);
+    expect(path.basename(channelDir)).toBe('my-new-feed');
   });
 });
 
@@ -186,7 +214,7 @@ describe('deleteChannel', () => {
   it('removes the channel directory', () => {
     const res = makeReservoir();
     const ch = res.addChannel({ name: 'Del', fetchMethod: FetchMethod.RSS, url: 'u', retentionStrategy: RetentionStrategy.RetainAll });
-    const channelDir = path.join(tmpDir, 'channels', ch.id);
+    const channelDir = channelDirForId(ch.id);
     expect(fs.existsSync(channelDir)).toBe(true);
     res.deleteChannel(ch.id);
     expect(fs.existsSync(channelDir)).toBe(false);
@@ -305,7 +333,7 @@ describe('clean', () => {
     addTestItem(res, ch.id, { id: 'del1', read: true, content: 'big content'.repeat(100) });
     res.clean();
     // Should still exist
-    expect(fs.existsSync(path.join(tmpDir, 'channels', ch.id, 'content', 'del1.md'))).toBe(true);
+    expect(fs.existsSync(path.join(channelDirForId(ch.id), 'content', 'del1.md'))).toBe(true);
   });
 
   it('deletes eligible files when over maxSizeMB', () => {
@@ -318,7 +346,7 @@ describe('clean', () => {
     addTestItem(res, ch.id, { id: 'new1', fetchedAt: t2, read: true, content: 'x'.repeat(2000) });
     res.clean();
     // old1 should be deleted first (oldest), new1 may or may not be deleted
-    expect(fs.existsSync(path.join(tmpDir, 'channels', ch.id, 'content', 'old1.md'))).toBe(false);
+    expect(fs.existsSync(path.join(channelDirForId(ch.id), 'content', 'old1.md'))).toBe(false);
   });
 
   it('does not delete items with RetainAll strategy', () => {
@@ -326,7 +354,7 @@ describe('clean', () => {
     const ch = res.addChannel({ name: 'C', fetchMethod: FetchMethod.RSS, url: 'u', retentionStrategy: RetentionStrategy.RetainAll });
     addTestItem(res, ch.id, { id: 'keep1', read: true, content: 'x'.repeat(5000) });
     res.clean();
-    expect(fs.existsSync(path.join(tmpDir, 'channels', ch.id, 'content', 'keep1.md'))).toBe(true);
+    expect(fs.existsSync(path.join(channelDirForId(ch.id), 'content', 'keep1.md'))).toBe(true);
   });
 
   it('does not delete unread items with RetainUnread strategy', () => {
@@ -334,6 +362,6 @@ describe('clean', () => {
     const ch = res.addChannel({ name: 'C', fetchMethod: FetchMethod.RSS, url: 'u', retentionStrategy: RetentionStrategy.RetainUnread });
     addTestItem(res, ch.id, { id: 'unread1', read: false, content: 'x'.repeat(5000) });
     res.clean();
-    expect(fs.existsSync(path.join(tmpDir, 'channels', ch.id, 'content', 'unread1.md'))).toBe(true);
+    expect(fs.existsSync(path.join(channelDirForId(ch.id), 'content', 'unread1.md'))).toBe(true);
   });
 });
