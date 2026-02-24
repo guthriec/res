@@ -4,14 +4,16 @@ import * as path from 'path';
 
 // ─── RSS fetcher ──────────────────────────────────────────────────────────────
 
-jest.mock('rss-parser', () => {
-  return jest.fn().mockImplementation(() => ({
-    parseURL: jest.fn().mockResolvedValue({
+vi.mock('rss-parser', () => {
+  return {
+    default: vi.fn().mockImplementation(() => ({
+      parseURL: vi.fn().mockResolvedValue({
       items: [
         {
           title: 'Article One',
           link: 'https://example.com/1',
           content: '# Article One content',
+          'content:encoded': '# Article One full text',
           contentSnippet: 'Snippet one',
         },
         {
@@ -20,41 +22,68 @@ jest.mock('rss-parser', () => {
           contentSnippet: 'Snippet two',
         },
       ],
-    }),
-  }));
+      }),
+    })),
+  };
 });
 
 describe('fetchRSS', () => {
-  afterEach(() => jest.clearAllMocks());
+  const mockFetch = vi.fn();
+
+  beforeAll(() => {
+    global.fetch = mockFetch as unknown as typeof fetch;
+  });
+
+  afterEach(() => vi.clearAllMocks());
 
   it('returns content items from feed', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: async () => '<html><body><h1>Fetched body</h1></body></html>',
+    });
+
     const { fetchRSS } = await import('../src/fetchers/rss');
     const items = await fetchRSS('https://example.com/feed', 'chan-1');
     expect(items).toHaveLength(2);
     expect(items[0].title).toBe('Article One');
-    expect(items[0].channelId).toBe('chan-1');
-    expect(items[0].read).toBe(false);
     expect(items[0].url).toBe('https://example.com/1');
-    expect(items[0].content).toBe('# Article One content');
+    expect(items[0].content).toContain('## Feed Content');
+    expect(items[0].content).toContain('# Article One full text');
+    expect(items[0].content).not.toContain('Snippet one');
+    expect(items[0].content).toContain('## Fetched Page Content');
+    expect(items[0].content).toContain('Fetched body');
   });
 
   it('falls back to contentSnippet when content is missing', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      text: async () => '<html><body><p>Fetched body</p></body></html>',
+    });
+
     const { fetchRSS } = await import('../src/fetchers/rss');
     const items = await fetchRSS('https://example.com/feed', 'chan-1');
-    expect(items[1].content).toBe('Snippet two');
+    expect(items[1].content).toContain('Snippet two');
+    expect(items[1].content).toContain('## Fetched Page Content');
   });
 
-  it('assigns unique ids to items', async () => {
+  it('returns both feed and fetched content sections even on fetch failure', async () => {
+    mockFetch.mockRejectedValue(new Error('network error'));
+
     const { fetchRSS } = await import('../src/fetchers/rss');
     const items = await fetchRSS('https://example.com/feed', 'chan-1');
-    expect(items[0].id).not.toBe(items[1].id);
+    expect(items[0].content).toContain('## Feed Content');
+    expect(items[0].content).toContain('## Fetched Page Content');
   });
 });
 
 // ─── WebPage fetcher ──────────────────────────────────────────────────────────
 
 describe('fetchWebPage', () => {
-  const mockFetch = jest.fn();
+  const mockFetch = vi.fn();
 
   beforeAll(() => {
     global.fetch = mockFetch as unknown as typeof fetch;
@@ -69,16 +98,22 @@ describe('fetchWebPage', () => {
       ok: true,
       status: 200,
       statusText: 'OK',
-      text: async () => '<html><head><title>Hello World</title></head><body><h1>Hello</h1></body></html>',
+      text: async () => [
+        '<html><head><title>Hello World</title></head><body>',
+        '<nav>Navigation noise</nav>',
+        '<main><article><h1>Hello</h1><p>Main content only</p></article></main>',
+        '<footer>Footer noise</footer>',
+        '</body></html>',
+      ].join(''),
     });
 
     const { fetchWebPage } = await import('../src/fetchers/webpage');
     const items = await fetchWebPage('https://example.com', 'chan-2');
     expect(items).toHaveLength(1);
     expect(items[0].title).toBe('Hello World');
-    expect(items[0].channelId).toBe('chan-2');
     expect(items[0].url).toBe('https://example.com');
-    expect(items[0].content).toContain('Hello');
+    expect(items[0].content).toContain('Main content only');
+    expect(items[0].content).not.toContain('Footer noise');
   });
 
   it('falls back to URL as title when <title> is missing', async () => {
@@ -120,7 +155,7 @@ describe('fetchCustom', () => {
 
   afterEach(() => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
-    jest.resetModules();
+    vi.resetModules();
   });
 
   it('executes the script and returns content items', async () => {
@@ -137,8 +172,6 @@ describe('fetchCustom', () => {
     expect(items[0].title).toBe('Custom Item');
     expect(items[0].content).toBe('# Custom');
     expect(items[0].url).toBe('https://custom.com');
-    expect(items[0].channelId).toBe('chan-3');
-    expect(items[0].read).toBe(false);
   });
 
   it('throws when script does not export a function', async () => {

@@ -49,18 +49,57 @@ function addTestItem(
     read: overrides.read ?? false,
     url: overrides.url,
   };
+
+  const slug = (item.title || 'content')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'content';
+
+  const frontmatter = [
+    '---',
+    `id: ${JSON.stringify(item.id)}`,
+    `channelId: ${JSON.stringify(item.channelId)}`,
+    `title: ${JSON.stringify(item.title)}`,
+    `fetchedAt: ${JSON.stringify(item.fetchedAt)}`,
+    ...(item.url ? [`url: ${JSON.stringify(item.url)}`] : []),
+    '---',
+    overrides.content ?? `# ${item.title}`,
+  ].join('\n');
+
   // Write content file
   const contentDir = path.join(channelDirForId(channelId), 'content');
   fs.mkdirSync(contentDir, { recursive: true });
-  fs.writeFileSync(path.join(contentDir, `${id}.md`), overrides.content ?? `# ${item.title}`);
+  let contentPath = path.join(contentDir, `${slug}.md`);
+  let suffix = 2;
+  while (fs.existsSync(contentPath)) {
+    contentPath = path.join(contentDir, `${slug}-${suffix}.md`);
+    suffix += 1;
+  }
+  fs.writeFileSync(contentPath, frontmatter);
+
   // Update metadata
   const metaPath = path.join(channelDirForId(channelId), 'metadata.json');
   const meta = fs.existsSync(metaPath)
-    ? (JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as { items: ContentMetadata[] })
+    ? (JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as { items: Array<{ id: string; read: boolean }> })
     : { items: [] };
-  meta.items.push(item);
+  meta.items.push({ id: item.id, read: item.read });
   fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
   return item;
+}
+
+function contentPathForId(channelId: string, contentId: string): string | null {
+  const contentDir = path.join(channelDirForId(channelId), 'content');
+  if (!fs.existsSync(contentDir)) return null;
+  const entries = fs.readdirSync(contentDir, { withFileTypes: true }).filter((entry) => entry.isFile() && entry.name.endsWith('.md'));
+  for (const entry of entries) {
+    const filePath = path.join(contentDir, entry.name);
+    const raw = fs.readFileSync(filePath, 'utf-8');
+    if (raw.includes(`id: ${JSON.stringify(contentId)}`)) {
+      return filePath;
+    }
+  }
+  return null;
 }
 
 // ─── initialize ──────────────────────────────────────────────────────────────
@@ -150,6 +189,27 @@ describe('addChannel', () => {
     });
     const channelDir = channelDirForId(ch.id);
     expect(path.basename(channelDir)).toBe('my-new-feed');
+    expect(ch.id).toBe('my-new-feed');
+  });
+
+  it('adds numeric suffix to both channel directory and id when slug collides', () => {
+    const res = makeReservoir();
+    const first = res.addChannel({
+      name: 'Same Name',
+      fetchMethod: FetchMethod.RSS,
+      url: 'https://example.com/one',
+      retentionStrategy: RetentionStrategy.RetainAll,
+    });
+    const second = res.addChannel({
+      name: 'Same Name',
+      fetchMethod: FetchMethod.RSS,
+      url: 'https://example.com/two',
+      retentionStrategy: RetentionStrategy.RetainAll,
+    });
+
+    expect(first.id).toBe('same-name');
+    expect(second.id).toBe('same-name-2');
+    expect(path.basename(channelDirForId(second.id))).toBe('same-name-2');
   });
 });
 
@@ -183,6 +243,45 @@ describe('listChannels', () => {
     res.addChannel({ name: 'A', fetchMethod: FetchMethod.RSS, url: 'u1', retentionStrategy: RetentionStrategy.RetainAll });
     res.addChannel({ name: 'B', fetchMethod: FetchMethod.WebPage, url: 'u2', retentionStrategy: RetentionStrategy.RetainUnread });
     expect(res.listChannels()).toHaveLength(2);
+  });
+});
+
+// ─── fetchChannel ────────────────────────────────────────────────────────────
+
+describe('fetchChannel', () => {
+  it('assigns global serial IDs across channels', async () => {
+    const res = makeReservoir();
+
+    const scriptName = 'items.js';
+    fs.writeFileSync(
+      path.join(tmpDir, 'scripts', scriptName),
+      `module.exports = async function() {
+        return [
+          { title: 'First', content: '# First', url: 'https://example.com/first' },
+          { title: 'Second', content: '# Second', url: 'https://example.com/second' }
+        ];
+      };`,
+      'utf-8',
+    );
+
+    const ch1 = res.addChannel({
+      name: 'Custom 1',
+      fetchMethod: FetchMethod.Custom,
+      script: scriptName,
+      retentionStrategy: RetentionStrategy.RetainAll,
+    });
+    const ch2 = res.addChannel({
+      name: 'Custom 2',
+      fetchMethod: FetchMethod.Custom,
+      script: scriptName,
+      retentionStrategy: RetentionStrategy.RetainAll,
+    });
+
+    const firstBatch = await res.fetchChannel(ch1.id);
+    const secondBatch = await res.fetchChannel(ch2.id);
+
+    expect(firstBatch.map((item) => item.id)).toEqual(['1', '2']);
+    expect(secondBatch.map((item) => item.id)).toEqual(['3', '4']);
   });
 });
 
@@ -256,6 +355,26 @@ describe('listUnread', () => {
     addTestItem(res, ch.id, { id: 'c1', read: false, content: '# Hello' });
     const unread = res.listUnread();
     expect(unread[0].content).toBe('# Hello');
+  });
+
+  it('returns metadata fields from markdown frontmatter', () => {
+    const res = makeReservoir();
+    const ch = res.addChannel({ name: 'Meta', fetchMethod: FetchMethod.RSS, url: 'u', retentionStrategy: RetentionStrategy.RetainAll });
+    addTestItem(res, ch.id, {
+      id: 'fm1',
+      title: 'Frontmatter Item',
+      fetchedAt: '2024-01-01T00:00:00.000Z',
+      url: 'https://example.com/fm1',
+      read: false,
+      content: '# Frontmatter body',
+    });
+
+    const unread = res.listUnread();
+    expect(unread).toHaveLength(1);
+    expect(unread[0].id).toBe('fm1');
+    expect(unread[0].title).toBe('Frontmatter Item');
+    expect(unread[0].fetchedAt).toBe('2024-01-01T00:00:00.000Z');
+    expect(unread[0].url).toBe('https://example.com/fm1');
   });
 });
 
@@ -333,7 +452,7 @@ describe('clean', () => {
     addTestItem(res, ch.id, { id: 'del1', read: true, content: 'big content'.repeat(100) });
     res.clean();
     // Should still exist
-    expect(fs.existsSync(path.join(channelDirForId(ch.id), 'content', 'del1.md'))).toBe(true);
+    expect(contentPathForId(ch.id, 'del1')).not.toBeNull();
   });
 
   it('deletes eligible files when over maxSizeMB', () => {
@@ -346,7 +465,7 @@ describe('clean', () => {
     addTestItem(res, ch.id, { id: 'new1', fetchedAt: t2, read: true, content: 'x'.repeat(2000) });
     res.clean();
     // old1 should be deleted first (oldest), new1 may or may not be deleted
-    expect(fs.existsSync(path.join(channelDirForId(ch.id), 'content', 'old1.md'))).toBe(false);
+    expect(contentPathForId(ch.id, 'old1')).toBeNull();
   });
 
   it('does not delete items with RetainAll strategy', () => {
@@ -354,7 +473,7 @@ describe('clean', () => {
     const ch = res.addChannel({ name: 'C', fetchMethod: FetchMethod.RSS, url: 'u', retentionStrategy: RetentionStrategy.RetainAll });
     addTestItem(res, ch.id, { id: 'keep1', read: true, content: 'x'.repeat(5000) });
     res.clean();
-    expect(fs.existsSync(path.join(channelDirForId(ch.id), 'content', 'keep1.md'))).toBe(true);
+    expect(contentPathForId(ch.id, 'keep1')).not.toBeNull();
   });
 
   it('does not delete unread items with RetainUnread strategy', () => {
@@ -362,6 +481,40 @@ describe('clean', () => {
     const ch = res.addChannel({ name: 'C', fetchMethod: FetchMethod.RSS, url: 'u', retentionStrategy: RetentionStrategy.RetainUnread });
     addTestItem(res, ch.id, { id: 'unread1', read: false, content: 'x'.repeat(5000) });
     res.clean();
-    expect(fs.existsSync(path.join(channelDirForId(ch.id), 'content', 'unread1.md'))).toBe(true);
+    expect(contentPathForId(ch.id, 'unread1')).not.toBeNull();
+  });
+});
+
+describe('content storage format', () => {
+  it('uses title-based content filenames and markdown frontmatter', () => {
+    const res = makeReservoir();
+    const ch = res.addChannel({
+      name: 'Storage',
+      fetchMethod: FetchMethod.RSS,
+      url: 'https://example.com/feed',
+      retentionStrategy: RetentionStrategy.RetainAll,
+    });
+
+    addTestItem(res, ch.id, {
+      id: 'fmt1',
+      title: 'My Test Title',
+      fetchedAt: '2024-01-01T00:00:00.000Z',
+      content: '# Body',
+      read: false,
+    });
+
+    const contentDir = path.join(channelDirForId(ch.id), 'content');
+    const files = fs.readdirSync(contentDir);
+    expect(files).toContain('my-test-title.md');
+
+    const raw = fs.readFileSync(path.join(contentDir, 'my-test-title.md'), 'utf-8');
+    expect(raw.startsWith('---\n')).toBe(true);
+    expect(raw).toContain(`id: ${JSON.stringify('fmt1')}`);
+    expect(raw).toContain(`title: ${JSON.stringify('My Test Title')}`);
+
+    const metadata = JSON.parse(fs.readFileSync(path.join(channelDirForId(ch.id), 'metadata.json'), 'utf-8')) as {
+      items: Array<Record<string, unknown>>;
+    };
+    expect(metadata.items).toEqual([{ id: 'fmt1', read: false }]);
   });
 });

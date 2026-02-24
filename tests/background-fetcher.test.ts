@@ -18,7 +18,7 @@ beforeEach(() => {
 
 afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
-  jest.restoreAllMocks();
+  vi.restoreAllMocks();
 });
 
 function mkChannel(overrides: Partial<Channel> = {}): Channel {
@@ -37,7 +37,7 @@ function mkChannel(overrides: Partial<Channel> = {}): Channel {
 
 describe('runScheduledFetchTick', () => {
   it('fetches channels that have refresh intervals configured', async () => {
-    const fetchChannel = jest.fn().mockResolvedValue([]);
+    const fetchChannel = vi.fn().mockResolvedValue([]);
     const reservoir = {
       listChannels: () => [mkChannel({ id: 'scheduled', refreshInterval: 1000 })],
       fetchChannel,
@@ -52,7 +52,7 @@ describe('runScheduledFetchTick', () => {
   });
 
   it('fetches channels using default refresh interval when omitted', async () => {
-    const fetchChannel = jest.fn().mockResolvedValue([]);
+    const fetchChannel = vi.fn().mockResolvedValue([]);
     const reservoir = {
       listChannels: () => [mkChannel({ id: 'unscheduled' })],
       fetchChannel,
@@ -69,7 +69,7 @@ describe('runScheduledFetchTick', () => {
   });
 
   it('respects polling interval between attempts', async () => {
-    const fetchChannel = jest.fn().mockResolvedValue([]);
+    const fetchChannel = vi.fn().mockResolvedValue([]);
     const reservoir = {
       listChannels: () => [mkChannel({ id: 'scheduled', refreshInterval: 1000 })],
       fetchChannel,
@@ -85,7 +85,7 @@ describe('runScheduledFetchTick', () => {
   });
 
   it('records errors and clears them after a succeeding run', async () => {
-    const fetchChannel = jest
+    const fetchChannel = vi
       .fn()
       .mockRejectedValueOnce(new Error('boom'))
       .mockResolvedValueOnce([]);
@@ -108,7 +108,7 @@ describe('runScheduledFetchTick', () => {
 
 describe('startBackgroundFetcher / stopBackgroundFetcher / getBackgroundFetcherStatus', () => {
   it('start writes pid file and runs provided loop in-process', async () => {
-    const runner = jest.fn().mockResolvedValue(undefined);
+    const runner = vi.fn().mockResolvedValue(undefined);
 
     await startBackgroundFetcher(tmpDir, { runner });
 
@@ -121,7 +121,7 @@ describe('startBackgroundFetcher / stopBackgroundFetcher / getBackgroundFetcherS
 
   it('start throws when an existing fetcher pid is running', async () => {
     fs.writeFileSync(path.join(tmpDir, '.res-fetcher.pid'), `${process.pid}\n`, 'utf-8');
-    const runner = jest.fn();
+    const runner = vi.fn();
 
     await expect(startBackgroundFetcher(tmpDir, { runner })).rejects.toThrow('already running');
     expect(runner).not.toHaveBeenCalled();
@@ -154,7 +154,7 @@ describe('startBackgroundFetcher / stopBackgroundFetcher / getBackgroundFetcherS
 
   it('stop sends SIGTERM and clears pid file', () => {
     fs.writeFileSync(path.join(tmpDir, '.res-fetcher.pid'), `${process.pid}\n`, 'utf-8');
-    const killSpy = jest.spyOn(process, 'kill').mockReturnValue(true);
+    const killSpy = vi.spyOn(process, 'kill').mockReturnValue(true);
 
     const result = stopBackgroundFetcher(tmpDir);
 

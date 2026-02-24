@@ -1,17 +1,18 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { v4 as uuidv4 } from 'uuid';
 import {
   ReservoirConfig,
   ChannelConfig,
   Channel,
   ContentMetadata,
   ContentItem,
+  FetchedContent,
   DEFAULT_REFRESH_INTERVAL_MS,
 } from './types';
 import { fetchRSS } from './fetchers/rss';
 import { fetchWebPage } from './fetchers/webpage';
 import { fetchCustom } from './fetchers/custom';
+import { ContentIdAllocator } from './content-id-allocator';
 
 const CONFIG_FILE = '.res-config.json';
 const CHANNELS_DIR = 'channels';
@@ -20,6 +21,25 @@ const CHANNEL_CONFIG_FILE = 'channel.json';
 const CHANNEL_METADATA_FILE = 'metadata.json';
 const CONTENT_DIR = 'content';
 
+interface ContentReadState {
+  id: string;
+  read: boolean;
+}
+
+interface ContentFrontmatter {
+  id: string;
+  channelId: string;
+  title: string;
+  fetchedAt: string;
+  url?: string;
+}
+
+interface ParsedContentFile {
+  meta: ContentFrontmatter;
+  content: string;
+  filePath: string;
+}
+
 function channelDirectorySlug(name: string): string {
   const slug = name
     .trim()
@@ -27,6 +47,81 @@ function channelDirectorySlug(name: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
   return slug || 'channel';
+}
+
+function contentFileSlug(title: string): string {
+  const slug = title
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return slug || 'content';
+}
+
+function toFrontmatter(meta: ContentFrontmatter, content: string): string {
+  const lines = [
+    '---',
+    `id: ${JSON.stringify(meta.id)}`,
+    `channelId: ${JSON.stringify(meta.channelId)}`,
+    `title: ${JSON.stringify(meta.title)}`,
+    `fetchedAt: ${JSON.stringify(meta.fetchedAt)}`,
+  ];
+  if (meta.url !== undefined) {
+    lines.push(`url: ${JSON.stringify(meta.url)}`);
+  }
+  lines.push('---');
+  return `${lines.join('\n')}\n${content}`;
+}
+
+function parseFrontmatter(rawContent: string): { meta: ContentFrontmatter | null; content: string } {
+  if (!rawContent.startsWith('---\n')) {
+    return { meta: null, content: rawContent };
+  }
+
+  const endIdx = rawContent.indexOf('\n---\n', 4);
+  if (endIdx === -1) {
+    return { meta: null, content: rawContent };
+  }
+
+  const header = rawContent.slice(4, endIdx).split('\n');
+  const body = rawContent.slice(endIdx + '\n---\n'.length);
+  const kv: Record<string, string> = {};
+
+  for (const line of header) {
+    const sep = line.indexOf(':');
+    if (sep === -1) continue;
+    const key = line.slice(0, sep).trim();
+    const value = line.slice(sep + 1).trim();
+    kv[key] = value;
+  }
+
+  const id = kv.id;
+  const channelId = kv.channelId;
+  const title = kv.title;
+  const fetchedAt = kv.fetchedAt;
+  if (!id || !channelId || !title || !fetchedAt) {
+    return { meta: null, content: rawContent };
+  }
+
+  const parseMaybeJsonString = (value: string): string => {
+    try {
+      const parsed = JSON.parse(value);
+      return typeof parsed === 'string' ? parsed : value;
+    } catch {
+      return value;
+    }
+  };
+
+  return {
+    meta: {
+      id: parseMaybeJsonString(id),
+      channelId: parseMaybeJsonString(channelId),
+      title: parseMaybeJsonString(title),
+      fetchedAt: parseMaybeJsonString(fetchedAt),
+      url: kv.url !== undefined ? parseMaybeJsonString(kv.url) : undefined,
+    },
+    content: body,
+  };
 }
 
 function normalizeChannel(rawChannel: Channel | (Omit<Channel, 'refreshInterval'> & { refreshInterval?: number })): Channel {
@@ -44,10 +139,12 @@ function normalizeChannel(rawChannel: Channel | (Omit<Channel, 'refreshInterval'
 export class Reservoir {
   private readonly dir: string;
   private config: ReservoirConfig;
+  private readonly idAllocator: ContentIdAllocator;
 
   private constructor(dir: string, config: ReservoirConfig) {
     this.dir = dir;
     this.config = config;
+    this.idAllocator = ContentIdAllocator.forReservoir(dir);
   }
 
   /**
@@ -93,13 +190,6 @@ export class Reservoir {
   // ─── Channel management ────────────────────────────────────────────────────
 
   addChannel(config: ChannelConfig): Channel {
-    const id = uuidv4();
-    const channel: Channel = {
-      id,
-      createdAt: new Date().toISOString(),
-      ...config,
-      refreshInterval: config.refreshInterval ?? DEFAULT_REFRESH_INTERVAL_MS,
-    };
     const channelsDir = path.join(this.dir, CHANNELS_DIR);
     const baseDirName = channelDirectorySlug(config.name);
     let channelDirName = baseDirName;
@@ -108,6 +198,14 @@ export class Reservoir {
       channelDirName = `${baseDirName}-${suffix}`;
       suffix += 1;
     }
+
+    const channel: Channel = {
+      id: channelDirName,
+      createdAt: new Date().toISOString(),
+      ...config,
+      refreshInterval: config.refreshInterval ?? DEFAULT_REFRESH_INTERVAL_MS,
+    };
+
     const channelDir = path.join(channelsDir, channelDirName);
     fs.mkdirSync(path.join(channelDir, CONTENT_DIR), { recursive: true });
     fs.writeFileSync(path.join(channelDir, CHANNEL_CONFIG_FILE), JSON.stringify(channel, null, 2));
@@ -164,7 +262,7 @@ export class Reservoir {
 
   async fetchChannel(channelId: string): Promise<ContentItem[]> {
     const channel = this.viewChannel(channelId);
-    let fetched: ContentItem[];
+    let fetched: FetchedContent[];
 
     switch (channel.fetchMethod) {
       case 'rss':
@@ -187,17 +285,35 @@ export class Reservoir {
 
     // Persist fetched items
     const metadata = this.loadMetadata(channelId);
-    const existingIds = new Set(metadata.items.map((i) => i.id));
+    const channelDir = this.resolveChannelDir(channelId);
+    const contentDir = path.join(channelDir, CONTENT_DIR);
+    const persisted: ContentItem[] = [];
 
     for (const item of fetched) {
-      if (existingIds.has(item.id)) continue;
-      const { content, ...meta } = item;
-      metadata.items.push(meta);
-      const contentPath = path.join(this.resolveChannelDir(channelId), CONTENT_DIR, `${item.id}.md`);
-      fs.writeFileSync(contentPath, content);
+      const id = await this.idAllocator.nextId();
+      const fetchedAt = new Date().toISOString();
+      const frontmatter: ContentFrontmatter = {
+        id,
+        channelId,
+        title: item.title,
+        fetchedAt,
+        url: item.url,
+      };
+      metadata.items.push({ id, read: false });
+      const contentPath = this.createUniqueContentPath(contentDir, item.title);
+      fs.writeFileSync(contentPath, toFrontmatter(frontmatter, item.content));
+      persisted.push({
+        id,
+        channelId,
+        title: item.title,
+        fetchedAt,
+        read: false,
+        url: item.url,
+        content: item.content,
+      });
     }
     this.saveMetadata(channelId, metadata);
-    return fetched;
+    return persisted;
   }
 
   // ─── Content management ───────────────────────────────────────────────────
@@ -206,14 +322,16 @@ export class Reservoir {
     const channels = channelIds ? channelIds.map((id) => this.viewChannel(id)) : this.listChannels();
     const results: ContentItem[] = [];
     for (const channel of channels) {
-      for (const item of this.loadMetadata(channel.id).items) {
-        if (!item.read) {
-          const contentPath = path.join(this.resolveChannelDir(channel.id), CONTENT_DIR, `${item.id}.md`);
-          results.push({
-            ...item,
-            content: fs.existsSync(contentPath) ? fs.readFileSync(contentPath, 'utf-8') : '',
-          });
-        }
+      const parsedById = this.readContentFilesById(channel.id);
+      for (const state of this.loadMetadata(channel.id).items) {
+        if (state.read) continue;
+        const parsed = parsedById.get(state.id);
+        if (!parsed) continue;
+        results.push({
+          ...parsed.meta,
+          read: state.read,
+          content: parsed.content,
+        });
       }
     }
     return results;
@@ -259,14 +377,18 @@ export class Reservoir {
 
     for (const channel of this.listChannels()) {
       const { retentionStrategy } = channel;
+      const parsedById = this.readContentFilesById(channel.id);
       for (const item of this.loadMetadata(channel.id).items) {
+        const parsed = parsedById.get(item.id);
+        if (!parsed) continue;
         const eligible =
           retentionStrategy === 'retain_none' ||
           (retentionStrategy === 'retain_unread' && item.read);
         if (eligible) {
           candidates.push({
+            ...parsed.meta,
             ...item,
-            filePath: path.join(this.resolveChannelDir(channel.id), CONTENT_DIR, `${item.id}.md`),
+            filePath: parsed.filePath,
           });
         }
       }
@@ -288,13 +410,35 @@ export class Reservoir {
 
   // ─── Private helpers ──────────────────────────────────────────────────────
 
-  private loadMetadata(channelId: string): { items: ContentMetadata[] } {
+  private loadMetadata(channelId: string): { items: ContentReadState[] } {
     const metaPath = path.join(this.resolveChannelDir(channelId), CHANNEL_METADATA_FILE);
     if (!fs.existsSync(metaPath)) return { items: [] };
-    return JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as { items: ContentMetadata[] };
+
+    const raw = JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as { items?: Array<ContentMetadata | ContentReadState> };
+    const items = Array.isArray(raw.items) ? raw.items : [];
+
+    const alreadyReadState = items.every(
+      (item) =>
+        item &&
+        typeof item === 'object' &&
+        'id' in item &&
+        'read' in item &&
+        Object.keys(item).every((k) => k === 'id' || k === 'read'),
+    );
+    if (alreadyReadState) {
+      return { items: items as ContentReadState[] };
+    }
+
+    const legacyItems = items as ContentMetadata[];
+    this.migrateLegacyContent(channelId, legacyItems);
+    const migrated: { items: ContentReadState[] } = {
+      items: legacyItems.map((item) => ({ id: item.id, read: item.read })),
+    };
+    this.saveMetadata(channelId, migrated);
+    return migrated;
   }
 
-  private saveMetadata(channelId: string, metadata: { items: ContentMetadata[] }): void {
+  private saveMetadata(channelId: string, metadata: { items: ContentReadState[] }): void {
     fs.writeFileSync(
       path.join(this.resolveChannelDir(channelId), CHANNEL_METADATA_FILE),
       JSON.stringify(metadata, null, 2),
@@ -305,6 +449,19 @@ export class Reservoir {
     const channelsDir = path.join(this.dir, CHANNELS_DIR);
     if (!fs.existsSync(channelsDir)) {
       throw new Error(`Channel not found: ${channelId}`);
+    }
+
+    const directPath = path.join(channelsDir, channelId);
+    const directConfigPath = path.join(directPath, CHANNEL_CONFIG_FILE);
+    if (fs.existsSync(directConfigPath)) {
+      try {
+        const channel = JSON.parse(fs.readFileSync(directConfigPath, 'utf-8')) as Channel;
+        if (channel.id === channelId) {
+          return directPath;
+        }
+      } catch {
+        // fall back to legacy directory scan
+      }
     }
 
     const entries = fs.readdirSync(channelsDir, { withFileTypes: true });
@@ -348,17 +505,23 @@ export class Reservoir {
     // Find the reference item's fetchedAt across these channels
     let refFetchedAt: string | undefined;
     for (const ch of channels) {
-      const item = this.loadMetadata(ch.id).items.find((i) => i.id === contentId);
-      if (item) { refFetchedAt = item.fetchedAt; break; }
+      const parsed = this.readContentFilesById(ch.id).get(contentId);
+      if (parsed) {
+        refFetchedAt = parsed.meta.fetchedAt;
+        break;
+      }
     }
     if (!refFetchedAt) throw new Error(`Content not found: ${contentId}`);
 
     const refTime = new Date(refFetchedAt).getTime();
     for (const ch of channels) {
+      const parsedById = this.readContentFilesById(ch.id);
       const meta = this.loadMetadata(ch.id);
       let changed = false;
       for (const item of meta.items) {
-        if (new Date(item.fetchedAt).getTime() > refTime) {
+        const parsed = parsedById.get(item.id);
+        if (!parsed) continue;
+        if (new Date(parsed.meta.fetchedAt).getTime() > refTime) {
           item.read = read;
           changed = true;
         }
@@ -379,5 +542,64 @@ export class Reservoir {
       const p = path.join(dir, entry.name);
       return acc + (entry.isDirectory() ? this.getDirSize(p) : fs.statSync(p).size);
     }, 0);
+  }
+
+  private createUniqueContentPath(contentDir: string, title: string): string {
+    const base = contentFileSlug(title);
+    let candidate = path.join(contentDir, `${base}.md`);
+    let suffix = 2;
+    while (fs.existsSync(candidate)) {
+      candidate = path.join(contentDir, `${base}-${suffix}.md`);
+      suffix += 1;
+    }
+    return candidate;
+  }
+
+  private readContentFilesById(channelId: string): Map<string, ParsedContentFile> {
+    const contentDir = path.join(this.resolveChannelDir(channelId), CONTENT_DIR);
+    const parsedById = new Map<string, ParsedContentFile>();
+    if (!fs.existsSync(contentDir)) return parsedById;
+
+    for (const entry of fs.readdirSync(contentDir, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.md')) continue;
+      const filePath = path.join(contentDir, entry.name);
+      const raw = fs.readFileSync(filePath, 'utf-8');
+      const parsed = parseFrontmatter(raw);
+      if (!parsed.meta?.id) continue;
+      parsedById.set(parsed.meta.id, {
+        meta: parsed.meta,
+        content: parsed.content,
+        filePath,
+      });
+    }
+
+    return parsedById;
+  }
+
+  private migrateLegacyContent(channelId: string, legacyItems: ContentMetadata[]): void {
+    const channelDir = this.resolveChannelDir(channelId);
+    const contentDir = path.join(channelDir, CONTENT_DIR);
+    fs.mkdirSync(contentDir, { recursive: true });
+
+    for (const item of legacyItems) {
+      const legacyPath = path.join(contentDir, `${item.id}.md`);
+      if (!fs.existsSync(legacyPath)) continue;
+
+      const raw = fs.readFileSync(legacyPath, 'utf-8');
+      const parsed = parseFrontmatter(raw);
+      const frontmatter: ContentFrontmatter = {
+        id: item.id,
+        channelId: item.channelId,
+        title: item.title,
+        fetchedAt: item.fetchedAt,
+        url: item.url,
+      };
+      const body = parsed.meta ? parsed.content : raw;
+      const targetPath = this.createUniqueContentPath(contentDir, item.title);
+      fs.writeFileSync(targetPath, toFrontmatter(frontmatter, body));
+      if (targetPath !== legacyPath) {
+        fs.unlinkSync(legacyPath);
+      }
+    }
   }
 }

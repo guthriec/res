@@ -49,3 +49,9 @@ export interface ContentItem extends ContentMetadata {
   /** Full markdown content */
   content: string;
 }
+
+export interface FetchedContent {
+  title: string;
+  url?: string;
+  content: string;
+}
