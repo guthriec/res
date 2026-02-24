@@ -18,17 +18,18 @@ export async function fetchRSS(url: string, _channelId: string): Promise<Fetched
 
   const items = await Promise.all(
     (feed.items ?? []).map(async (item) => {
-      const fullFeedContent = (item['content:encoded'] ?? item.content ?? '').trim();
-      const feedContent = fullFeedContent.length > 0 ? fullFeedContent : (item.contentSnippet ?? '');
-      const fetchedContent = await toFetchedMarkdown(item.link);
+      const fullFeedContent = (item['content:encoded'] ?? '').trim();
+      const snippet = (item.contentSnippet ?? item.content ?? '').trim();
+      const fetchedContent = fullFeedContent.length === 0 ? await toFetchedMarkdown(item.link) : '';
+      const fullContent = fullFeedContent.length > 0 ? fullFeedContent : fetchedContent;
       const combined = [
-        '## Feed Content',
+        '## Snippet',
         '',
-        feedContent,
+        snippet,
         '',
-        '## Fetched Page Content',
+        '## Full Content',
         '',
-        fetchedContent,
+        fullContent,
       ].join('\n');
 
       return {

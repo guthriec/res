@@ -16,8 +16,8 @@ Each channel stores content under `channels/<channel-slug>/content/`.
 	- `fetchedAt`
 	- optional `url`
 - RSS content bodies include two markdown sections:
-	- `## Feed Content` (raw content provided by the RSS feed)
-	- `## Fetched Page Content` (markdown converted from fetching the item URL)
+	- `## Snippet` (raw content provided by the RSS feed)
+	- `## Full Content` (markdown converted from fetching the item URL)
 - `channels/<channel-slug>/metadata.json` stores only read state (`id` + `read`).
 
 ## Background fetching

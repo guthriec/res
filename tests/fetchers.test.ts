@@ -49,11 +49,14 @@ describe('fetchRSS', () => {
     expect(items).toHaveLength(2);
     expect(items[0].title).toBe('Article One');
     expect(items[0].url).toBe('https://example.com/1');
-    expect(items[0].content).toContain('## Feed Content');
+    expect(items[0].content).toContain('## Snippet');
+    expect(items[0].content).toContain('Snippet one');
     expect(items[0].content).toContain('# Article One full text');
-    expect(items[0].content).not.toContain('Snippet one');
-    expect(items[0].content).toContain('## Fetched Page Content');
-    expect(items[0].content).toContain('Fetched body');
+    expect(items[0].content).toContain('## Full Content');
+    expect(items[0].content).not.toContain('Fetched body');
+
+    expect(items[1].content).toContain('Fetched body');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
   it('falls back to contentSnippet when content is missing', async () => {
@@ -67,7 +70,7 @@ describe('fetchRSS', () => {
     const { fetchRSS } = await import('../src/fetchers/rss');
     const items = await fetchRSS('https://example.com/feed', 'chan-1');
     expect(items[1].content).toContain('Snippet two');
-    expect(items[1].content).toContain('## Fetched Page Content');
+    expect(items[1].content).toContain('## Full Content');
   });
 
   it('returns both feed and fetched content sections even on fetch failure', async () => {
@@ -75,8 +78,10 @@ describe('fetchRSS', () => {
 
     const { fetchRSS } = await import('../src/fetchers/rss');
     const items = await fetchRSS('https://example.com/feed', 'chan-1');
-    expect(items[0].content).toContain('## Feed Content');
-    expect(items[0].content).toContain('## Fetched Page Content');
+    expect(items[0].content).toContain('## Snippet');
+    expect(items[0].content).toContain('## Full Content');
+    expect(items[1].content).toContain('## Snippet');
+    expect(items[1].content).toContain('## Full Content');
   });
 });
 
