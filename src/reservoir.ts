@@ -8,6 +8,7 @@ import {
   ContentItem,
   FetchedContent,
   DEFAULT_REFRESH_INTERVAL_MS,
+  GLOBAL_LOCK_NAME,
 } from './types';
 import { fetchRSS } from './fetchers/rss';
 import { fetchWebPage } from './fetchers/webpage';
@@ -21,9 +22,9 @@ const CHANNEL_CONFIG_FILE = 'channel.json';
 const CHANNEL_METADATA_FILE = 'metadata.json';
 const CONTENT_DIR = 'content';
 
-interface ContentReadState {
+interface ContentLockState {
   id: string;
-  read: boolean;
+  locks: string[];
 }
 
 interface ContentFrontmatter {
@@ -125,15 +126,35 @@ function parseFrontmatter(rawContent: string): { meta: ContentFrontmatter | null
 }
 
 function normalizeChannel(rawChannel: Channel | (Omit<Channel, 'refreshInterval'> & { refreshInterval?: number })): Channel {
-  const rawRefresh = rawChannel.refreshInterval;
+  const { retentionStrategy: _retentionStrategy, ...rest } = rawChannel as Channel & { retentionStrategy?: unknown };
+  const rawRefresh = rest.refreshInterval;
   const refreshInterval =
     typeof rawRefresh === 'number' && Number.isFinite(rawRefresh) && rawRefresh > 0
       ? rawRefresh
       : DEFAULT_REFRESH_INTERVAL_MS;
   return {
-    ...rawChannel,
+    ...rest,
     refreshInterval,
+    retainedLocks: normalizeLocks(rawChannel.retainedLocks),
   };
+}
+
+function normalizeLockName(lockName?: string): string {
+  if (lockName === undefined) return GLOBAL_LOCK_NAME;
+  const normalized = lockName.trim();
+  return normalized.length > 0 ? normalized : GLOBAL_LOCK_NAME;
+}
+
+function normalizeLocks(lockNames?: string[]): string[] {
+  if (!Array.isArray(lockNames) || lockNames.length === 0) return [];
+  const unique = new Set<string>();
+  for (const lockName of lockNames) {
+    if (typeof lockName !== 'string') continue;
+    const normalized = lockName.trim();
+    if (!normalized) continue;
+    unique.add(normalized);
+  }
+  return [...unique];
 }
 
 export class Reservoir {
@@ -204,6 +225,7 @@ export class Reservoir {
       createdAt: new Date().toISOString(),
       ...config,
       refreshInterval: config.refreshInterval ?? DEFAULT_REFRESH_INTERVAL_MS,
+      retainedLocks: normalizeLocks(config.retainedLocks),
     };
 
     const channelDir = path.join(channelsDir, channelDirName);
@@ -299,7 +321,8 @@ export class Reservoir {
         fetchedAt,
         url: item.url,
       };
-      metadata.items.push({ id, read: false });
+      const locks = [...channel.retainedLocks];
+      metadata.items.push({ id, locks });
       const contentPath = this.createUniqueContentPath(contentDir, item.title);
       fs.writeFileSync(contentPath, toFrontmatter(frontmatter, item.content));
       persisted.push({
@@ -307,7 +330,7 @@ export class Reservoir {
         channelId,
         title: item.title,
         fetchedAt,
-        read: false,
+        locks,
         url: item.url,
         content: item.content,
       });
@@ -318,47 +341,91 @@ export class Reservoir {
 
   // ─── Content management ───────────────────────────────────────────────────
 
-  listUnread(channelIds?: string[]): ContentItem[] {
+  listRetained(channelIds?: string[]): ContentItem[] {
     const channels = channelIds ? channelIds.map((id) => this.viewChannel(id)) : this.listChannels();
     const results: ContentItem[] = [];
     for (const channel of channels) {
       const parsedById = this.readContentFilesById(channel.id);
       for (const state of this.loadMetadata(channel.id).items) {
-        if (state.read) continue;
+        if (state.locks.length === 0) continue;
         const parsed = parsedById.get(state.id);
         if (!parsed) continue;
+        const relativePath = path.relative(this.dir, parsed.filePath);
         results.push({
           ...parsed.meta,
-          read: state.read,
+          locks: [...state.locks],
           content: parsed.content,
+          filePath: relativePath,
         });
       }
     }
     return results;
   }
 
-  markRead(contentId: string): void {
-    this.setReadStatus(contentId, true);
+  retainContent(contentId: string, lockName?: string): void {
+    this.updateContentLock(contentId, normalizeLockName(lockName), true);
   }
 
-  markUnread(contentId: string): void {
-    this.setReadStatus(contentId, false);
-  }
-
-  /**
-   * Marks all content loaded *after* the given content ID as read.
-   * Optionally restrict to a single channel.
-   */
-  markReadAfter(contentId: string, channelId?: string): void {
-    this.setReadStatusAfter(contentId, true, channelId);
+  releaseContent(contentId: string, lockName?: string): void {
+    this.updateContentLock(contentId, normalizeLockName(lockName), false);
   }
 
   /**
-   * Marks all content loaded *after* the given content ID as unread.
-   * Optionally restrict to a single channel.
+   * Retain multiple content items by ID range.
+   * @param options.fromId - Start ID (inclusive, optional for open-ended ranges)
+   * @param options.toId - End ID (inclusive, optional for open-ended ranges)
+   * @param options.channelId - Optional channel filter
+   * @param options.lockName - Lock name to apply (defaults to [global])
+   * @returns Number of items retained
    */
-  markUnreadAfter(contentId: string, channelId?: string): void {
-    this.setReadStatusAfter(contentId, false, channelId);
+  retainContentRange(options: {
+    fromId?: string;
+    toId?: string;
+    channelId?: string;
+    lockName?: string;
+  }): number {
+    return this.updateContentLockRange({ ...options, retain: true });
+  }
+
+  /**
+   * Release multiple content items by ID range.
+   * @param options.fromId - Start ID (inclusive, optional for open-ended ranges)
+   * @param options.toId - End ID (inclusive, optional for open-ended ranges)
+   * @param options.channelId - Optional channel filter
+   * @param options.lockName - Lock name to remove (defaults to [global])
+   * @returns Number of items released
+   */
+  releaseContentRange(options: {
+    fromId?: string;
+    toId?: string;
+    channelId?: string;
+    lockName?: string;
+  }): number {
+    return this.updateContentLockRange({ ...options, retain: false });
+  }
+
+  retainChannel(channelId: string, lockName?: string): Channel {
+    const channel = this.viewChannel(channelId);
+    const normalized = normalizeLockName(lockName);
+    const retainedLocks = normalizeLocks([...channel.retainedLocks, normalized]);
+    const updated: Channel = { ...channel, retainedLocks };
+    fs.writeFileSync(
+      path.join(this.resolveChannelDir(channelId), CHANNEL_CONFIG_FILE),
+      JSON.stringify(updated, null, 2),
+    );
+    return updated;
+  }
+
+  releaseChannel(channelId: string, lockName?: string): Channel {
+    const channel = this.viewChannel(channelId);
+    const normalized = normalizeLockName(lockName);
+    const retainedLocks = channel.retainedLocks.filter((name) => name !== normalized);
+    const updated: Channel = { ...channel, retainedLocks };
+    fs.writeFileSync(
+      path.join(this.resolveChannelDir(channelId), CHANNEL_CONFIG_FILE),
+      JSON.stringify(updated, null, 2),
+    );
+    return updated;
   }
 
   /**
@@ -376,15 +443,11 @@ export class Reservoir {
     const candidates: Candidate[] = [];
 
     for (const channel of this.listChannels()) {
-      const { retentionStrategy } = channel;
       const parsedById = this.readContentFilesById(channel.id);
       for (const item of this.loadMetadata(channel.id).items) {
         const parsed = parsedById.get(item.id);
         if (!parsed) continue;
-        const eligible =
-          retentionStrategy === 'retain_none' ||
-          (retentionStrategy === 'retain_unread' && item.read);
-        if (eligible) {
+        if (item.locks.length === 0) {
           candidates.push({
             ...parsed.meta,
             ...item,
@@ -410,35 +473,67 @@ export class Reservoir {
 
   // ─── Private helpers ──────────────────────────────────────────────────────
 
-  private loadMetadata(channelId: string): { items: ContentReadState[] } {
+  private loadMetadata(channelId: string): { items: ContentLockState[] } {
     const metaPath = path.join(this.resolveChannelDir(channelId), CHANNEL_METADATA_FILE);
     if (!fs.existsSync(metaPath)) return { items: [] };
 
-    const raw = JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as { items?: Array<ContentMetadata | ContentReadState> };
+    const raw = JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as { items?: Array<ContentMetadata | ContentLockState | { id: string; read: boolean }> };
     const items = Array.isArray(raw.items) ? raw.items : [];
 
-    const alreadyReadState = items.every(
-      (item) =>
-        item &&
-        typeof item === 'object' &&
-        'id' in item &&
-        'read' in item &&
-        Object.keys(item).every((k) => k === 'id' || k === 'read'),
-    );
-    if (alreadyReadState) {
-      return { items: items as ContentReadState[] };
+    const lockStateItems: ContentLockState[] = [];
+    let needsWrite = false;
+
+    for (const item of items) {
+      if (!item || typeof item !== 'object' || !('id' in item) || typeof item.id !== 'string') {
+        needsWrite = true;
+        continue;
+      }
+
+      if ('locks' in item && Array.isArray(item.locks)) {
+        const locks = normalizeLocks(item.locks);
+        lockStateItems.push({ id: item.id, locks });
+        if (locks.length !== item.locks.length) {
+          needsWrite = true;
+        }
+        continue;
+      }
+
+      if ('read' in item && typeof item.read === 'boolean') {
+        const locks = item.read ? [] : [GLOBAL_LOCK_NAME];
+        lockStateItems.push({ id: item.id, locks });
+        needsWrite = true;
+        continue;
+      }
+
+      const legacyItem = item as ContentMetadata;
+      const legacyRead = (legacyItem as { read?: boolean }).read;
+      const locks = legacyRead === false ? [GLOBAL_LOCK_NAME] : [];
+      lockStateItems.push({ id: legacyItem.id, locks });
+      needsWrite = true;
     }
 
-    const legacyItems = items as ContentMetadata[];
-    this.migrateLegacyContent(channelId, legacyItems);
-    const migrated: { items: ContentReadState[] } = {
-      items: legacyItems.map((item) => ({ id: item.id, read: item.read })),
-    };
-    this.saveMetadata(channelId, migrated);
-    return migrated;
+    if (needsWrite) {
+      const legacyItems = items.filter(
+        (item): item is ContentMetadata =>
+          !!item &&
+          typeof item === 'object' &&
+          'id' in item &&
+          'channelId' in item &&
+          'title' in item &&
+          'fetchedAt' in item,
+      );
+      if (legacyItems.length > 0) {
+        this.migrateLegacyContent(channelId, legacyItems);
+      }
+      const migrated = { items: lockStateItems };
+      this.saveMetadata(channelId, migrated);
+      return migrated;
+    }
+
+    return { items: lockStateItems };
   }
 
-  private saveMetadata(channelId: string, metadata: { items: ContentReadState[] }): void {
+  private saveMetadata(channelId: string, metadata: { items: ContentLockState[] }): void {
     fs.writeFileSync(
       path.join(this.resolveChannelDir(channelId), CHANNEL_METADATA_FILE),
       JSON.stringify(metadata, null, 2),
@@ -492,42 +587,80 @@ export class Reservoir {
     return null;
   }
 
-  private setReadStatus(contentId: string, read: boolean): void {
+  private updateContentLock(contentId: string, lockName: string, retain: boolean): void {
     const found = this.findItem(contentId);
     if (!found) throw new Error(`Content not found: ${contentId}`);
     const meta = this.loadMetadata(found.channelId);
-    meta.items[found.index].read = read;
+    const item = meta.items[found.index];
+    if (retain) {
+      item.locks = normalizeLocks([...item.locks, lockName]);
+    } else {
+      item.locks = item.locks.filter((name) => name !== lockName);
+    }
     this.saveMetadata(found.channelId, meta);
   }
 
-  private setReadStatusAfter(contentId: string, read: boolean, channelId?: string): void {
+  private updateContentLockRange(options: {
+    fromId?: string;
+    toId?: string;
+    channelId?: string;
+    lockName?: string;
+    retain: boolean;
+  }): number {
+    const { fromId, toId, channelId, lockName, retain } = options;
+    const normalized = normalizeLockName(lockName);
     const channels = channelId ? [this.viewChannel(channelId)] : this.listChannels();
-    // Find the reference item's fetchedAt across these channels
-    let refFetchedAt: string | undefined;
-    for (const ch of channels) {
-      const parsed = this.readContentFilesById(ch.id).get(contentId);
-      if (parsed) {
-        refFetchedAt = parsed.meta.fetchedAt;
-        break;
+    
+    // Validate range boundaries exist
+    const fromIdNum = fromId ? Number(fromId) : -Infinity;
+    const toIdNum = toId ? Number(toId) : Infinity;
+    
+    if (fromId && isNaN(fromIdNum)) throw new Error(`Invalid start ID: ${fromId}`);
+    if (toId && isNaN(toIdNum)) throw new Error(`Invalid end ID: ${toId}`);
+    if (fromIdNum > toIdNum) throw new Error(`Invalid range: fromId (${fromId}) comes after toId (${toId})`);
+    
+    let foundFrom = !fromId;
+    let foundTo = !toId;
+    let count = 0;
+    const metaByChannel = new Map<string, { items: ContentLockState[] }>();
+    
+    // Process items in each channel
+    for (const channel of channels) {
+      if (!metaByChannel.has(channel.id)) {
+        metaByChannel.set(channel.id, this.loadMetadata(channel.id));
       }
-    }
-    if (!refFetchedAt) throw new Error(`Content not found: ${contentId}`);
-
-    const refTime = new Date(refFetchedAt).getTime();
-    for (const ch of channels) {
-      const parsedById = this.readContentFilesById(ch.id);
-      const meta = this.loadMetadata(ch.id);
-      let changed = false;
+      const meta = metaByChannel.get(channel.id)!;
+      
       for (const item of meta.items) {
-        const parsed = parsedById.get(item.id);
-        if (!parsed) continue;
-        if (new Date(parsed.meta.fetchedAt).getTime() > refTime) {
-          item.read = read;
-          changed = true;
+        const itemIdNum = Number(item.id);
+        if (isNaN(itemIdNum)) continue;
+        
+        // Check if this item matches the range boundaries
+        if (fromId && item.id === fromId) foundFrom = true;
+        if (toId && item.id === toId) foundTo = true;
+        
+        // Check if item is in range
+        if (itemIdNum >= fromIdNum && itemIdNum <= toIdNum) {
+          if (retain) {
+            item.locks = normalizeLocks([...item.locks, normalized]);
+          } else {
+            item.locks = item.locks.filter((name) => name !== normalized);
+          }
+          count++;
         }
       }
-      if (changed) this.saveMetadata(ch.id, meta);
     }
+    
+    // Verify range boundaries were found
+    if (!foundFrom) throw new Error(`Start ID not found: ${fromId}`);
+    if (!foundTo) throw new Error(`End ID not found: ${toId}`);
+    
+    // Save all modified metadata files
+    for (const [chId, meta] of metaByChannel.entries()) {
+      this.saveMetadata(chId, meta);
+    }
+    
+    return count;
   }
 
   private removeFromMetadata(channelId: string, contentId: string): void {

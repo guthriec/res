@@ -8,7 +8,7 @@ import {
   startBackgroundFetcher,
   stopBackgroundFetcher,
 } from '../src/background-fetcher';
-import { Channel, DEFAULT_REFRESH_INTERVAL_MS, FetchMethod, RetentionStrategy } from '../src/types';
+import { Channel, DEFAULT_REFRESH_INTERVAL_MS, FetchMethod } from '../src/types';
 
 let tmpDir: string;
 
@@ -31,7 +31,7 @@ function mkChannel(overrides: Partial<Channel> = {}): Channel {
     script: overrides.script,
     rateLimitInterval: overrides.rateLimitInterval,
     refreshInterval: overrides.refreshInterval ?? DEFAULT_REFRESH_INTERVAL_MS,
-    retentionStrategy: overrides.retentionStrategy ?? RetentionStrategy.RetainAll,
+    retainedLocks: overrides.retainedLocks ?? [],
   };
 }
 

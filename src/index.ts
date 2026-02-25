@@ -1,7 +1,7 @@
 export { Reservoir } from './reservoir';
 export {
-  RetentionStrategy,
   FetchMethod,
+  GLOBAL_LOCK_NAME,
   type ReservoirConfig,
   type ChannelConfig,
   type Channel,

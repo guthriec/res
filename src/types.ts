@@ -1,9 +1,3 @@
-export enum RetentionStrategy {
-  RetainAll = 'retain_all',
-  RetainUnread = 'retain_unread',
-  RetainNone = 'retain_none',
-}
-
 export enum FetchMethod {
   RSS = 'rss',
   WebPage = 'web_page',
@@ -11,6 +5,7 @@ export enum FetchMethod {
 }
 
 export const DEFAULT_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
+export const GLOBAL_LOCK_NAME = '[global]';
 
 export interface ReservoirConfig {
   maxSizeMB?: number;
@@ -27,13 +22,15 @@ export interface ChannelConfig {
   rateLimitInterval?: number;
   /** Background refresh interval in milliseconds (defaults to 24h if omitted) */
   refreshInterval?: number;
-  retentionStrategy: RetentionStrategy;
+  /** Lock names to apply automatically to newly fetched content */
+  retainedLocks?: string[];
 }
 
-export interface Channel extends Omit<ChannelConfig, 'refreshInterval'> {
+export interface Channel extends Omit<ChannelConfig, 'refreshInterval' | 'retainedLocks'> {
   id: string;
   createdAt: string;
   refreshInterval: number;
+  retainedLocks: string[];
 }
 
 export interface ContentMetadata {
@@ -41,13 +38,15 @@ export interface ContentMetadata {
   channelId: string;
   title: string;
   fetchedAt: string; // ISO timestamp
-  read: boolean;
+  locks: string[];
   url?: string;
 }
 
 export interface ContentItem extends ContentMetadata {
   /** Full markdown content */
   content: string;
+  /** Relative file path from reservoir root */
+  filePath?: string;
 }
 
 export interface FetchedContent {

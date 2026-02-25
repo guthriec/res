@@ -2,7 +2,7 @@
 import { Command } from 'commander';
 import * as path from 'path';
 import { Reservoir } from './reservoir';
-import { FetchMethod, RetentionStrategy } from './types';
+import { FetchMethod } from './types';
 import { getBackgroundFetcherStatus, startBackgroundFetcher, stopBackgroundFetcher } from './background-fetcher';
 
 const program = new Command();
@@ -14,6 +14,15 @@ program
 
 function loadReservoir(dir: string): Reservoir {
   return Reservoir.load(path.resolve(dir));
+}
+
+function parseLockList(raw?: string): string[] | undefined {
+  if (!raw) return undefined;
+  const locks = raw
+    .split(',')
+    .map((lock) => lock.trim())
+    .filter((lock) => lock.length > 0);
+  return locks.length > 0 ? [...new Set(locks)] : [];
 }
 
 // ─── init ────────────────────────────────────────────────────────────────────
@@ -41,11 +50,11 @@ channelCmd
   .option('--script <filename>', 'script filename in scripts/ dir (for custom type)')
   .option('--rate-limit <ms>', 'rate-limit interval in milliseconds')
   .option('--refresh-interval <ms>', 'background refresh interval in milliseconds')
-  .option('--retention <strategy>', 'retain_all | retain_unread | retain_none', 'retain_all')
+  .option('--retain-locks <names>', 'comma-separated lock names to apply to newly fetched content')
   .option('--dir <path>', 'reservoir directory', process.cwd())
   .action((name: string, opts: {
     type: string; url?: string; script?: string;
-    rateLimit?: string; refreshInterval?: string; retention: string; dir: string;
+    rateLimit?: string; refreshInterval?: string; retainLocks?: string; dir: string;
   }) => {
     const reservoir = loadReservoir(opts.dir);
     const channel = reservoir.addChannel({
@@ -55,7 +64,7 @@ channelCmd
       script: opts.script,
       rateLimitInterval: opts.rateLimit !== undefined ? parseInt(opts.rateLimit, 10) : undefined,
       refreshInterval: opts.refreshInterval !== undefined ? parseInt(opts.refreshInterval, 10) : undefined,
-      retentionStrategy: opts.retention as RetentionStrategy,
+      retainedLocks: parseLockList(opts.retainLocks),
     });
     console.log(JSON.stringify(channel, null, 2));
   });
@@ -69,11 +78,11 @@ channelCmd
   .option('--script <filename>', 'new script filename')
   .option('--rate-limit <ms>', 'new rate-limit interval in milliseconds')
   .option('--refresh-interval <ms>', 'new background refresh interval in milliseconds')
-  .option('--retention <strategy>', 'new retention strategy: retain_all | retain_unread | retain_none')
+  .option('--retain-locks <names>', 'new comma-separated lock names for newly fetched content')
   .option('--dir <path>', 'reservoir directory', process.cwd())
   .action((id: string, opts: {
     name?: string; type?: string; url?: string; script?: string;
-    rateLimit?: string; refreshInterval?: string; retention?: string; dir: string;
+    rateLimit?: string; refreshInterval?: string; retainLocks?: string; dir: string;
   }) => {
     const reservoir = loadReservoir(opts.dir);
     const updates: Record<string, unknown> = {};
@@ -83,7 +92,7 @@ channelCmd
     if (opts.script) updates.script = opts.script;
     if (opts.rateLimit !== undefined) updates.rateLimitInterval = parseInt(opts.rateLimit, 10);
     if (opts.refreshInterval !== undefined) updates.refreshInterval = parseInt(opts.refreshInterval, 10);
-    if (opts.retention) updates.retentionStrategy = opts.retention as RetentionStrategy;
+    if (opts.retainLocks !== undefined) updates.retainedLocks = parseLockList(opts.retainLocks);
     const channel = reservoir.editChannel(id, updates);
     console.log(JSON.stringify(channel, null, 2));
   });
@@ -111,8 +120,13 @@ channelCmd
   .description('List all channels')
   .option('--dir <path>', 'reservoir directory', process.cwd())
   .action((opts: { dir: string }) => {
-    const channels = loadReservoir(opts.dir).listChannels();
-    console.log(JSON.stringify(channels, null, 2));
+    const reservoir = loadReservoir(opts.dir);
+    const channels = reservoir.listChannels();
+    const output = channels.map((channel) => ({
+      ...channel,
+      path: `channels/${channel.id}`,
+    }));
+    console.log(JSON.stringify(output, null, 2));
   });
 
 // ─── background fetcher ─────────────────────────────────────────────────────
@@ -153,65 +167,102 @@ program
     console.log(result.message);
   });
 
-// ─── unread ──────────────────────────────────────────────────────────────────
+// ─── retain / release ───────────────────────────────────────────────────────
+
+const retainCmd = program.command('retain').description('Apply a lock to content or channels');
+
+retainCmd
+  .command('content <id> [lockName]')
+  .description('Retain a content item by adding a lock name (defaults to [global])')
+  .option('--dir <path>', 'reservoir directory', process.cwd())
+  .action((id: string, lockName: string | undefined, opts: { dir: string }) => {
+    loadReservoir(opts.dir).retainContent(id, lockName);
+    console.log(`Retained content ${id}${lockName ? ` with lock ${lockName}` : ''}`);
+  });
+
+retainCmd
+  .command('range [lockName]')
+  .description('Retain content by ID range (defaults to [global])')
+  .option('--from <id>', 'start from this ID (inclusive)')
+  .option('--to <id>', 'up to this ID (inclusive)')
+  .option('--channel <id>', 'restrict to this channel')
+  .option('--dir <path>', 'reservoir directory', process.cwd())
+  .action((lockName: string | undefined, opts: { from?: string; to?: string; channel?: string; dir: string }) => {
+    if (!opts.from && !opts.to) {
+      console.error('Error: Must specify at least --from or --to');
+      process.exit(1);
+    }
+    const count = loadReservoir(opts.dir).retainContentRange({
+      fromId: opts.from,
+      toId: opts.to,
+      channelId: opts.channel,
+      lockName,
+    });
+    console.log(`Retained ${count} item(s)${lockName ? ` with lock ${lockName}` : ''}`);
+  });
+
+retainCmd
+  .command('channel <id> [lockName]')
+  .description('Retain a channel by adding a lock applied to newly fetched content')
+  .option('--dir <path>', 'reservoir directory', process.cwd())
+  .action((id: string, lockName: string | undefined, opts: { dir: string }) => {
+    const channel = loadReservoir(opts.dir).retainChannel(id, lockName);
+    console.log(JSON.stringify(channel, null, 2));
+  });
+
+const releaseCmd = program.command('release').description('Remove a lock from content or channels');
+
+releaseCmd
+  .command('content <id> [lockName]')
+  .description('Release a content item lock name (defaults to [global])')
+  .option('--dir <path>', 'reservoir directory', process.cwd())
+  .action((id: string, lockName: string | undefined, opts: { dir: string }) => {
+    loadReservoir(opts.dir).releaseContent(id, lockName);
+    console.log(`Released content ${id}${lockName ? ` lock ${lockName}` : ''}`);
+  });
+
+releaseCmd
+  .command('range [lockName]')
+  .description('Release content locks by ID range (defaults to [global])')
+  .option('--from <id>', 'start from this ID (inclusive)')
+  .option('--to <id>', 'up to this ID (inclusive)')
+  .option('--channel <id>', 'restrict to this channel')
+  .option('--dir <path>', 'reservoir directory', process.cwd())
+  .action((lockName: string | undefined, opts: { from?: string; to?: string; channel?: string; dir: string }) => {
+    if (!opts.from && !opts.to) {
+      console.error('Error: Must specify at least --from or --to');
+      process.exit(1);
+    }
+    const count = loadReservoir(opts.dir).releaseContentRange({
+      fromId: opts.from,
+      toId: opts.to,
+      channelId: opts.channel,
+      lockName,
+    });
+    console.log(`Released ${count} item(s)${lockName ? ` lock ${lockName}` : ''}`);
+  });
+
+releaseCmd
+  .command('channel <id> [lockName]')
+  .description('Release a channel lock that applies to newly fetched content')
+  .option('--dir <path>', 'reservoir directory', process.cwd())
+  .action((id: string, lockName: string | undefined, opts: { dir: string }) => {
+    const channel = loadReservoir(opts.dir).releaseChannel(id, lockName);
+    console.log(JSON.stringify(channel, null, 2));
+  });
+
+// ─── retained ──────────────────────────────────────────────────────────────
 
 program
-  .command('unread')
-  .description('List unread content items')
+  .command('retained')
+  .description('List retained content items (any lock applied)')
   .option('--channels <ids>', 'comma-separated channel IDs to restrict to')
   .option('--dir <path>', 'reservoir directory', process.cwd())
   .action((opts: { channels?: string; dir: string }) => {
     const channelIds = opts.channels ? opts.channels.split(',').map((s) => s.trim()) : undefined;
-    const items = loadReservoir(opts.dir).listUnread(channelIds);
-    if (items.length === 0) {
-      console.log('No unread items.');
-      return;
-    }
-    for (const item of items) {
-      console.log(`[${item.id}] ${item.title} (channel: ${item.channelId})`);
-    }
-  });
-
-// ─── mark ────────────────────────────────────────────────────────────────────
-
-const markCmd = program.command('mark').description('Mark content as read or unread');
-
-markCmd
-  .command('read <id>')
-  .description('Mark a content item as read')
-  .option('--dir <path>', 'reservoir directory', process.cwd())
-  .action((id: string, opts: { dir: string }) => {
-    loadReservoir(opts.dir).markRead(id);
-    console.log(`Marked ${id} as read`);
-  });
-
-markCmd
-  .command('unread <id>')
-  .description('Mark a content item as unread')
-  .option('--dir <path>', 'reservoir directory', process.cwd())
-  .action((id: string, opts: { dir: string }) => {
-    loadReservoir(opts.dir).markUnread(id);
-    console.log(`Marked ${id} as unread`);
-  });
-
-markCmd
-  .command('read-after <id>')
-  .description('Mark all content loaded after the given ID as read')
-  .option('--channel <channelId>', 'restrict to a specific channel')
-  .option('--dir <path>', 'reservoir directory', process.cwd())
-  .action((id: string, opts: { channel?: string; dir: string }) => {
-    loadReservoir(opts.dir).markReadAfter(id, opts.channel);
-    console.log(`Marked all items after ${id} as read`);
-  });
-
-markCmd
-  .command('unread-after <id>')
-  .description('Mark all content loaded after the given ID as unread')
-  .option('--channel <channelId>', 'restrict to a specific channel')
-  .option('--dir <path>', 'reservoir directory', process.cwd())
-  .action((id: string, opts: { channel?: string; dir: string }) => {
-    loadReservoir(opts.dir).markUnreadAfter(id, opts.channel);
-    console.log(`Marked all items after ${id} as unread`);
+    const items = loadReservoir(opts.dir).listRetained(channelIds);
+    const output = items.map(({ content, ...item }) => item);
+    console.log(JSON.stringify(output, null, 2));
   });
 
 // ─── clean ───────────────────────────────────────────────────────────────────
