@@ -2,6 +2,7 @@ import Parser from 'rss-parser';
 import { FetchedContent } from '../types';
 import { fetchWebPageMarkdown } from './webpage';
 import { getFetchArgValue } from '../fetch-args';
+import { Fetcher } from './types';
 
 const parser = new Parser();
 
@@ -56,3 +57,7 @@ export async function fetchRSS(fetchArgs: Record<string, string> | undefined, _c
 
   return items;
 }
+
+export const rssFetcher: Fetcher = {
+  fetch: fetchRSS,
+};

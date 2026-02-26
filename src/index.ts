@@ -15,6 +15,7 @@ export { ContentIdAllocator } from './content-id-allocator';
 export { fetchRSS } from './fetchers/rss';
 export { fetchWebPage } from './fetchers/webpage';
 export { fetchCustom } from './fetchers/custom';
+export type { Fetcher, FetchArgs } from './fetchers/types';
 export {
   getBackgroundFetcherStatus,
   startBackgroundFetcher,

@@ -5,6 +5,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { FetchedContent } from '../types';
 import { fetchArgObjectToCliArgs } from '../fetch-args';
+import { Fetcher } from './types';
 
 const execFileAsync = promisify(execFile);
 
@@ -89,4 +90,12 @@ export async function fetchCustom(
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
+}
+
+export function createCustomFetcher(executablePath: string): Fetcher {
+  return {
+    fetch(fetchArgs, channelId) {
+      return fetchCustom(executablePath, channelId, fetchArgs);
+    },
+  };
 }

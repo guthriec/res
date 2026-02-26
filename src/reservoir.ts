@@ -13,9 +13,9 @@ import {
   DEFAULT_DUPLICATE_STRATEGY,
   GLOBAL_LOCK_NAME,
 } from './types';
-import { fetchRSS } from './fetchers/rss';
-import { fetchWebPage } from './fetchers/webpage';
-import { fetchCustom } from './fetchers/custom';
+import { getBuiltinFetcher } from './fetchers';
+import { createCustomFetcher } from './fetchers/custom';
+import { Fetcher } from './fetchers/types';
 import { ContentIdAllocator } from './content-id-allocator';
 
 const CONFIG_FILE = '.res-config.json';
@@ -433,19 +433,8 @@ export class Reservoir {
     await this.syncContentTracking();
     const channel = this.viewChannel(channelId);
     const fetchArgs = channel.fetchArgs;
-    let fetched: FetchedContent[];
-
-    switch (channel.fetchMethod) {
-      case 'rss':
-        fetched = await fetchRSS(fetchArgs, channelId);
-        break;
-      case 'web_page':
-        fetched = await fetchWebPage(fetchArgs, channelId);
-        break;
-      default:
-        fetched = await fetchCustom(path.join(this.customFetchersDirectory, channel.fetchMethod), channelId, fetchArgs);
-        break;
-    }
+    const fetcher = this.resolveFetcher(channel.fetchMethod);
+    const fetched: FetchedContent[] = await fetcher.fetch(fetchArgs, channelId);
 
     // Persist fetched items
     const metadata = this.loadMetadata(channelId);
@@ -1211,5 +1200,14 @@ export class Reservoir {
         fs.unlinkSync(legacyPath);
       }
     }
+  }
+
+  private resolveFetcher(fetchMethod: string): Fetcher {
+    const builtinFetcher = getBuiltinFetcher(fetchMethod);
+    if (builtinFetcher) {
+      return builtinFetcher;
+    }
+
+    return createCustomFetcher(path.join(this.customFetchersDirectory, fetchMethod));
   }
 }

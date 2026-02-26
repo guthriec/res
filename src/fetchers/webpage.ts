@@ -3,6 +3,7 @@ import { JSDOM, VirtualConsole } from 'jsdom';
 import { Readability } from '@mozilla/readability';
 import { FetchedContent } from '../types';
 import { getFetchArgValue } from '../fetch-args';
+import { Fetcher } from './types';
 
 const td = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced' });
 const virtualConsole = new VirtualConsole();
@@ -68,6 +69,10 @@ export async function fetchWebPage(fetchArgs: Record<string, string> | undefined
     },
   ];
 }
+
+export const webPageFetcher: Fetcher = {
+  fetch: fetchWebPage,
+};
 
 function extractTitle(html: string): string | undefined {
   const match = html.match(/<title[^>]*>([^<]*)<\/title>/i);
