@@ -210,12 +210,12 @@ res release channel <id> [lockName]
 
 Removes a channel-level lock for newly fetched content.
 
-## `list`
+## `content list`
 
 List content items with filters and pagination.
 
 ```bash
-res list \
+res content list \
   [--channels <ids>] \
   [--retained <true|false>] \
   [--retained-by <names>] \

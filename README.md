@@ -3,7 +3,7 @@
 > [!WARNING]
 > To date, this project has been mostly vibe-coded and has not been hardened. There are missing features and likely bugs, and there will likely be breaking changes.
 
-res is a CLI tool and Typescript library to collect web content into a local "reservoir" (organized directory) of markdown files for use as a document corpus in personal RAG, news summarization pipelines, or application support.
+res is a CLI tool and Typescript library to collect web content into a local "reservoir" (organized directory) of markdown files for use as a personal document corpus in RAG pipelines or in search/discovery applications.
 
 ## Documentation
 
@@ -13,9 +13,11 @@ res is a CLI tool and Typescript library to collect web content into a local "re
 
 ### Channels
 
-A channel represents a content source, along with logic around fetching items from the source and converting them into markdown files. res ships with one built-in channel type, for periodically fetching RSS feeds. res also allows users to define their own channel types by providing scraper executables which, when called, emit markdown files in an output directory (see below).
+A channel represents a content source, along with logic around fetching items from the source and converting them into markdown files. res ships with one built-in channel type, for periodically fetching RSS feeds. res also allows users to define their own channel types by providing custom ``fetcher`` executables which handle the fetching and Markdown conversion from custom sources.
 
 Channels are managed via the `res channel` command, and the automated background fetching can be toggled via `res start` and `res stop`.
+
+Channel configurations allow for specifying logic around refresh intervals, rate-limits, and deduplication logic.
 
 ### Content Items
 
@@ -24,11 +26,13 @@ Items consist of:
 - a markdown file, which may include frontmatter
 - optional supplementary static resources
 
-Each item must have a filename which is unique within its channel, which will also be the name of the directory containing related static resources. Channels can optionally configure an `idField` (a frontmatter key) for deduplication. If the configured field is missing, deduplication falls back to filename. Duplicate handling is controlled by channel `duplicateStrategy`: `overwrite` replaces existing content for the same dedupe key, while `keep both` keeps both files and appends `-1`, `-2`, etc. suffixes to duplicate filenames.
+All items are stored within a directory corresponding to its channel of origin.
 
-All content is stored within a directory corresponding to its channel of origin.
+Each item must have a filename which is unique within its channel, which will also be the name of the item subdirectory containing related static resources.
 
 Outside of the Markdown files, res tracks items by a globally unique and increasing-in-time serial number, and stores their fetch time and retention information (see below).
+
+The `res content list` command lists content matching the given query, with retained-content filtering enabled by default.
 
 ### Retention Locks
 
@@ -38,8 +42,6 @@ Users may keep track of whether a particular content item has been processed by 
 - signals to the system not to delete the content item if the reservoir begins to consume too much disk space
 
 The `res retain` and `res release` commands are used to create or release locks, respectively. Locks may be applied automatically to new content from a particular channel via `res retain channel`, and may be added/removed in bulk to contiguous sequences of content IDs via `res retain range`.
-
-The `res list` command lists content matching the given query, with retained-content filtering enabled by default.
 
 ### Custom Fetchers
 

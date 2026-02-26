@@ -266,9 +266,11 @@ releaseCmd
     console.log(JSON.stringify(channel, null, 2));
   });
 
-// ─── list ──────────────────────────────────────────────────────────────────
+// ─── content ───────────────────────────────────────────────────────────────
 
-program
+const contentCmd = program.command('content').description('Manage content items');
+
+contentCmd
   .command('list')
   .description('List content items with filtering and pagination')
   .option('--channels <ids>', 'comma-separated channel IDs to restrict to')
