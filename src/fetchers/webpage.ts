@@ -7,6 +7,15 @@ import { getFetchArgValue } from '../fetch-args';
 const td = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced' });
 const virtualConsole = new VirtualConsole();
 
+function slugifyFileStem(input: string): string {
+  const slug = input
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return slug || 'content';
+}
+
 virtualConsole.on('jsdomError', (err) => {
   if (err?.message?.includes('Could not parse CSS stylesheet')) {
     return;
@@ -50,9 +59,10 @@ export async function fetchWebPage(fetchArgs: Record<string, string> | undefined
   }
   const html = await response.text();
   const markdown = convertWebPageHtmlToMarkdown(html, url);
+  const title = extractTitle(html) ?? url;
   return [
     {
-      title: extractTitle(html) ?? url,
+      sourceFileName: `${slugifyFileStem(title)}.md`,
       url,
       content: markdown,
     },

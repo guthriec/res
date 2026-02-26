@@ -47,7 +47,7 @@ describe('fetchRSS', () => {
     const { fetchRSS } = await import('../src/fetchers/rss');
     const items = await fetchRSS({ url: 'https://example.com/feed' }, 'chan-1');
     expect(items).toHaveLength(2);
-    expect(items[0].title).toBe('Article One');
+    expect(items[0].sourceFileName).toBe('article-one.md');
     expect(items[0].url).toBe('https://example.com/1');
     expect(items[0].content).toContain('## Snippet');
     expect(items[0].content).toContain('Snippet one');
@@ -115,7 +115,7 @@ describe('fetchWebPage', () => {
     const { fetchWebPage } = await import('../src/fetchers/webpage');
   const items = await fetchWebPage({ url: 'https://example.com' }, 'chan-2');
     expect(items).toHaveLength(1);
-    expect(items[0].title).toBe('Hello World');
+    expect(items[0].sourceFileName).toBe('hello-world.md');
     expect(items[0].url).toBe('https://example.com');
     expect(items[0].content).toContain('Main content only');
     expect(items[0].content).not.toContain('Footer noise');
@@ -131,7 +131,7 @@ describe('fetchWebPage', () => {
 
     const { fetchWebPage } = await import('../src/fetchers/webpage');
   const items = await fetchWebPage({ url: 'https://example.com/notitle' }, 'chan-2');
-    expect(items[0].title).toBe('https://example.com/notitle');
+    expect(items[0].sourceFileName).toBe('https-example-com-notitle.md');
   });
 
   it('throws on non-OK response', async () => {
@@ -189,7 +189,6 @@ describe('fetchCustom', () => {
     const { fetchCustom } = await import('../src/fetchers/custom');
     const items = await fetchCustom(executablePath, 'chan-3');
     expect(items).toHaveLength(1);
-    expect(items[0].title).toBe('custom-item');
     expect(items[0].content).toContain('# Custom Item');
     expect(items[0].sourceFileName).toBe('custom-item.md');
   });

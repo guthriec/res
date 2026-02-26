@@ -42,13 +42,13 @@ export interface Channel extends Omit<ChannelConfig, 'refreshInterval' | 'retain
 export interface ContentMetadata {
   id: string;
   channelId: string;
-  title: string;
   fetchedAt: string; // ISO timestamp
   locks: string[];
   url?: string;
 }
 
 export interface ContentItem extends ContentMetadata {
+  title: string;
   /** Full markdown content */
   content: string;
   /** Relative file path from reservoir root */
@@ -56,7 +56,7 @@ export interface ContentItem extends ContentMetadata {
 }
 
 export interface FetchedContent {
-  title: string;
+  title?: string;
   url?: string;
   content: string;
   sourceFileName?: string;

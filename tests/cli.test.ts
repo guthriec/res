@@ -2,7 +2,16 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { Reservoir } from '../src/reservoir';
-import { FetchMethod, GLOBAL_LOCK_NAME, ContentMetadata } from '../src/types';
+import { FetchMethod, GLOBAL_LOCK_NAME } from '../src/types';
+
+interface TestContentMetadata {
+  id: string;
+  channelId: string;
+  title: string;
+  fetchedAt: string;
+  locks: string[];
+  url?: string;
+}
 
 let tmpDir: string;
 
@@ -37,10 +46,10 @@ function channelDirForId(channelId: string): string {
 
 function addTestItem(
   channelId: string,
-  overrides: Partial<ContentMetadata & { content: string }> = {},
-): ContentMetadata {
+  overrides: Partial<TestContentMetadata & { content: string }> = {},
+): TestContentMetadata {
   const id = overrides.id ?? `item-${Date.now()}-${Math.random()}`;
-  const item: ContentMetadata = {
+  const item: TestContentMetadata = {
     id,
     channelId,
     title: overrides.title ?? 'Test Item',

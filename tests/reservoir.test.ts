@@ -2,7 +2,16 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { Reservoir } from '../src/reservoir';
-import { FetchMethod, GLOBAL_LOCK_NAME, DEFAULT_DUPLICATE_STRATEGY, ContentMetadata } from '../src/types';
+import { FetchMethod, GLOBAL_LOCK_NAME, DEFAULT_DUPLICATE_STRATEGY } from '../src/types';
+
+interface TestContentMetadata {
+  id: string;
+  channelId: string;
+  title: string;
+  fetchedAt: string;
+  locks: string[];
+  url?: string;
+}
 
 let tmpDir: string;
 let previousXdgConfigHome: string | undefined;
@@ -46,10 +55,10 @@ function channelDirForId(channelId: string): string {
 function addTestItem(
   reservoir: Reservoir,
   channelId: string,
-  overrides: Partial<ContentMetadata & { content: string }> = {},
-): ContentMetadata {
+  overrides: Partial<TestContentMetadata & { content: string }> = {},
+): TestContentMetadata {
   const id = overrides.id ?? `item-${Date.now()}-${Math.random()}`;
-  const item: ContentMetadata = {
+  const item: TestContentMetadata = {
     id,
     channelId,
     title: overrides.title ?? 'Test Item',
@@ -94,7 +103,6 @@ function addTestItem(
   meta.items.push({
     id: item.id,
     locks: item.locks,
-    title: item.title,
     fetchedAt: item.fetchedAt,
     url: item.url,
     filePath: path.join('channels', channelId, 'content', path.basename(contentPath)).replace(/\\/g, '/'),
@@ -559,7 +567,7 @@ describe('listRetained', () => {
     const retained = res.listRetained();
     expect(retained).toHaveLength(1);
     expect(retained[0].id).toBe('fm1');
-    expect(retained[0].title).toBe('Frontmatter Item');
+    expect(retained[0].title).toBe('frontmatter item');
     expect(retained[0].fetchedAt).toBe('2024-01-01T00:00:00.000Z');
     expect(retained[0].url).toBe('https://example.com/fm1');
   });
@@ -755,7 +763,6 @@ describe('content storage format', () => {
       {
         id: 'fmt1',
         locks: [],
-        title: 'My Test Title',
         fetchedAt: '2024-01-01T00:00:00.000Z',
         filePath: path.join('channels', ch.id, 'content', 'my-test-title.md').replace(/\\/g, '/'),
       },

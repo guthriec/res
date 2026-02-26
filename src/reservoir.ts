@@ -43,7 +43,6 @@ interface ContentLockState {
   id: string;
   locks: string[];
   filePath?: string;
-  title: string;
   fetchedAt: string;
   url?: string;
 }
@@ -470,7 +469,6 @@ export class Reservoir {
         const existingState = metadataById.get(id);
         if (existingState) {
           locks = [...existingState.locks];
-          existingState.title = item.title;
           existingState.url = item.url;
           existingState.fetchedAt = new Date().toISOString();
           existingState.filePath = this.toRelativePath(existingEntry.filePath);
@@ -479,7 +477,6 @@ export class Reservoir {
           const lockState: ContentLockState = {
             id,
             locks: [...locks],
-            title: item.title,
             fetchedAt: new Date().toISOString(),
             url: item.url,
             filePath: this.toRelativePath(existingEntry.filePath),
@@ -495,7 +492,6 @@ export class Reservoir {
         const lockState: ContentLockState = {
           id,
           locks: [...locks],
-          title: item.title,
           fetchedAt: new Date().toISOString(),
           url: item.url,
           filePath: this.toRelativePath(contentPath),
@@ -507,7 +503,6 @@ export class Reservoir {
       const fetchedAt = new Date().toISOString();
       const state = metadataById.get(id);
       if (state) {
-        state.title = item.title;
         state.fetchedAt = fetchedAt;
         state.url = item.url;
         state.filePath = this.toRelativePath(contentPath);
@@ -535,7 +530,7 @@ export class Reservoir {
       persisted.push({
         id,
         channelId,
-        title: item.title,
+        title: this.inferTitleFromFileName(contentPath),
         fetchedAt,
         locks,
         url: item.url,
@@ -588,7 +583,7 @@ export class Reservoir {
         results.push({
           id: state.id,
           channelId: channel.id,
-          title: state.title,
+          title: this.inferTitleFromFileName(parsed.filePath),
           fetchedAt: state.fetchedAt,
           url: state.url,
           locks: [...state.locks],
@@ -686,7 +681,7 @@ export class Reservoir {
     const channelsDir = path.join(this.dir, CHANNELS_DIR);
     if (this.getDirSize(channelsDir) <= maxBytes) return;
 
-    type Candidate = ContentMetadata & { filePath: string };
+    type Candidate = Omit<ContentMetadata, 'channelId'> & { channelId: string; filePath: string };
     const candidates: Candidate[] = [];
 
     for (const channel of this.listChannels()) {
@@ -698,7 +693,6 @@ export class Reservoir {
           candidates.push({
             id: item.id,
             channelId: channel.id,
-            title: item.title,
             fetchedAt: item.fetchedAt,
             url: item.url,
             locks: item.locks,
@@ -749,9 +743,6 @@ export class Reservoir {
       if ('locks' in item && Array.isArray(item.locks)) {
         const locks = normalizeLocks(item.locks);
         const entry = item as ContentLockState & { fileName?: string };
-        const title = typeof entry.title === 'string' && entry.title.trim().length > 0
-          ? entry.title
-          : item.id;
         const fetchedAt = typeof entry.fetchedAt === 'string' && entry.fetchedAt.trim().length > 0
           ? entry.fetchedAt
           : new Date().toISOString();
@@ -765,7 +756,6 @@ export class Reservoir {
         lockStateItems.push({
           id: item.id,
           locks,
-          title,
           fetchedAt,
           url: typeof entry.url === 'string' ? entry.url : undefined,
           filePath,
@@ -773,7 +763,7 @@ export class Reservoir {
         if (locks.length !== item.locks.length) {
           needsWrite = true;
         }
-        if (title !== entry.title || fetchedAt !== entry.fetchedAt || filePath !== entry.filePath) {
+        if (fetchedAt !== entry.fetchedAt || filePath !== entry.filePath) {
           needsWrite = true;
         }
         continue;
@@ -784,7 +774,6 @@ export class Reservoir {
         lockStateItems.push({
           id: item.id,
           locks,
-          title: item.id,
           fetchedAt: new Date().toISOString(),
         });
         needsWrite = true;
@@ -797,7 +786,6 @@ export class Reservoir {
       lockStateItems.push({
         id: legacyItem.id,
         locks,
-        title: legacyItem.title,
         fetchedAt: legacyItem.fetchedAt,
         url: legacyItem.url,
       });
@@ -973,7 +961,13 @@ export class Reservoir {
     if (item.sourceFileName && item.sourceFileName.trim().length > 0) {
       return path.basename(item.sourceFileName, path.extname(item.sourceFileName));
     }
-    return contentFileSlug(item.title);
+    if (item.title && item.title.trim().length > 0) {
+      return contentFileSlug(item.title);
+    }
+    if (item.url && item.url.trim().length > 0) {
+      return contentFileSlug(item.url);
+    }
+    return 'content';
   }
 
   private resolveDedupeKeyForFetchedItem(item: FetchedContent, idField?: string): string {
@@ -1158,7 +1152,6 @@ export class Reservoir {
           const created: ContentLockState = {
             id,
             locks: [...channel.retainedLocks],
-            title: this.inferTitleFromFileName(filePath),
             fetchedAt: stat.mtime.toISOString(),
             filePath: relativePath,
           };
@@ -1171,11 +1164,6 @@ export class Reservoir {
 
         if (existing.filePath !== relativePath) {
           existing.filePath = relativePath;
-          metadataChanged = true;
-          recordsUpdated += 1;
-        }
-        if (!existing.title || existing.title.trim().length === 0) {
-          existing.title = this.inferTitleFromFileName(filePath);
           metadataChanged = true;
           recordsUpdated += 1;
         }

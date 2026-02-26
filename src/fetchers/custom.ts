@@ -75,11 +75,10 @@ export async function fetchCustom(
 
     const items = listMarkdownItems(outsDir).map((entry) => {
       const content = fs.readFileSync(entry.markdownPath, 'utf-8');
-      const title = path.basename(entry.sourceFileName, '.md') || '(untitled)';
-      const resourceDir = path.join(outsDir, title);
+      const stem = path.basename(entry.sourceFileName, '.md') || 'content';
+      const resourceDir = path.join(outsDir, stem);
 
       return {
-        title,
         content,
         sourceFileName: entry.sourceFileName,
         supplementaryFiles: fs.existsSync(resourceDir) ? collectSupplementaryFiles(resourceDir) : [],

@@ -5,6 +5,15 @@ import { getFetchArgValue } from '../fetch-args';
 
 const parser = new Parser();
 
+function slugifyFileStem(input: string): string {
+  const slug = input
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return slug || 'content';
+}
+
 export async function fetchRSS(fetchArgs: Record<string, string> | undefined, _channelId: string): Promise<FetchedContent[]> {
   const url = getFetchArgValue(fetchArgs, 'url');
   if (!url) {
@@ -38,18 +47,12 @@ export async function fetchRSS(fetchArgs: Record<string, string> | undefined, _c
       ].join('\n');
 
       return {
-        title: item.title ?? '(untitled)',
+        sourceFileName: `${slugifyFileStem(item.title ?? item.link ?? 'content')}.md`,
         url: item.link,
         content: combined,
       };
     }),
   );
 
-  return items.map((item) => {
-    return {
-      title: item.title,
-      url: item.url,
-      content: item.content,
-    };
-  });
+  return items;
 }
