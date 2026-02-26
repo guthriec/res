@@ -4,7 +4,7 @@ import * as path from 'path';
 import { Reservoir } from './reservoir';
 import { FetchMethod } from './types';
 import { getBackgroundFetcherStatus, startBackgroundFetcher, stopBackgroundFetcher } from './background-fetcher';
-import { mergeFetchArgObject, normalizeFetchArgObject } from './fetch-args';
+import { buildChannelAddConfig, buildChannelEditUpdates, ChannelAddCliOptions, ChannelEditCliOptions } from './cli-channel-options';
 
 const program = new Command();
 
@@ -94,18 +94,11 @@ channelCmd
   .option('--fetch-arg <key=value>', 'fetcher argument (repeatable key=value)', collectOptionValue)
   .option('--rate-limit <seconds>', 'rate-limit interval in seconds')
   .option('--refresh-interval <seconds>', 'background refresh interval in seconds')
-  .action((name: string, opts: {
-    type: string; fetchArg?: string[];
-    rateLimit?: string; refreshInterval?: string;
-  }) => {
+  .option('--id-field <field>', 'optional frontmatter field name used for deduplication')
+  .option('--duplicate-strategy <strategy>', 'duplicate handling: overwrite | keep both')
+  .action((name: string, opts: ChannelAddCliOptions) => {
     const reservoir = loadReservoir(getGlobalDir());
-    const channel = reservoir.addChannel({
-      name,
-      fetchMethod: opts.type as FetchMethod,
-      fetchArgs: normalizeFetchArgObject(opts.fetchArg),
-      rateLimitInterval: opts.rateLimit !== undefined ? parseInt(opts.rateLimit, 10) : undefined,
-      refreshInterval: opts.refreshInterval !== undefined ? parseInt(opts.refreshInterval, 10) : undefined,
-    });
+    const channel = reservoir.addChannel(buildChannelAddConfig(name, opts));
     console.log(JSON.stringify(channel, null, 2));
   });
 
@@ -117,20 +110,12 @@ channelCmd
   .option('--fetch-arg <key=value>', 'fetcher argument edits by key (repeatable key=value)', collectOptionValue)
   .option('--rate-limit <seconds>', 'new rate-limit interval in seconds')
   .option('--refresh-interval <seconds>', 'new background refresh interval in seconds')
-  .action((id: string, opts: {
-    name?: string; type?: string; fetchArg?: string[];
-    rateLimit?: string; refreshInterval?: string;
-  }) => {
+  .option('--id-field <field>', 'new frontmatter field name used for deduplication')
+  .option('--duplicate-strategy <strategy>', 'new duplicate handling: overwrite | keep both')
+  .action((id: string, opts: ChannelEditCliOptions) => {
     const reservoir = loadReservoir(getGlobalDir());
     const existing = reservoir.viewChannel(id);
-    const updates: Record<string, unknown> = {};
-    if (opts.name) updates.name = opts.name;
-    if (opts.type) updates.fetchMethod = opts.type as FetchMethod;
-    if (opts.fetchArg) {
-      updates.fetchArgs = mergeFetchArgObject(existing.fetchArgs, opts.fetchArg);
-    }
-    if (opts.rateLimit !== undefined) updates.rateLimitInterval = parseInt(opts.rateLimit, 10);
-    if (opts.refreshInterval !== undefined) updates.refreshInterval = parseInt(opts.refreshInterval, 10);
+    const updates = buildChannelEditUpdates(existing.fetchArgs, opts);
     const channel = reservoir.editChannel(id, updates);
     console.log(JSON.stringify(channel, null, 2));
   });

@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { Reservoir } from '../src/reservoir';
-import { FetchMethod, GLOBAL_LOCK_NAME, ContentMetadata } from '../src/types';
+import { FetchMethod, GLOBAL_LOCK_NAME, DEFAULT_DUPLICATE_STRATEGY, ContentMetadata } from '../src/types';
 
 let tmpDir: string;
 let previousXdgConfigHome: string | undefined;
@@ -187,6 +187,8 @@ describe('addChannel', () => {
     expect(ch.id).toBeDefined();
     expect(ch.createdAt).toBeDefined();
     expect(ch.name).toBe('Test');
+    expect(ch.idField).toBeUndefined();
+    expect(ch.duplicateStrategy).toBe(DEFAULT_DUPLICATE_STRATEGY);
     expect(ch.retainedLocks).toEqual([]);
   });
 
@@ -343,6 +345,98 @@ describe('fetchChannel', () => {
     expect(batch).toHaveLength(1);
     expect(batch[0].locks).toEqual(['alpha', 'beta']);
   });
+
+  it('overwrites duplicates by idField and preserves content ID', async () => {
+    const res = makeReservoir();
+
+    const fetcherPath = path.join(tmpDir, 'overwrite-id-fetcher.sh');
+    fs.writeFileSync(
+      fetcherPath,
+      [
+        '#!/bin/sh',
+        'cat <<\'EOF\' > outs/item.md',
+        '---',
+        'externalId: "abc-123"',
+        '---',
+        'first version',
+        'EOF',
+      ].join('\n'),
+      'utf-8',
+    );
+    fs.chmodSync(fetcherPath, 0o755);
+    const registered = res.addFetcher(fetcherPath);
+
+    const ch = res.addChannel({
+      name: 'Overwrite by idField',
+      fetchMethod: registered.name,
+      idField: 'externalId',
+      duplicateStrategy: 'overwrite',
+    });
+
+    const firstBatch = await res.fetchChannel(ch.id);
+    const firstId = firstBatch[0].id;
+
+    fs.writeFileSync(
+      registered.destinationPath,
+      [
+        '#!/bin/sh',
+        'cat <<\'EOF\' > outs/item.md',
+        '---',
+        'externalId: "abc-123"',
+        '---',
+        'second version',
+        'EOF',
+      ].join('\n'),
+      'utf-8',
+    );
+    fs.chmodSync(registered.destinationPath, 0o755);
+
+    const secondBatch = await res.fetchChannel(ch.id);
+    expect(secondBatch).toHaveLength(1);
+    expect(secondBatch[0].id).toBe(firstId);
+
+    const listed = res.listContent({ channelIds: [ch.id] });
+    expect(listed).toHaveLength(1);
+    expect(listed[0].id).toBe(firstId);
+    expect(listed[0].content).toContain('second version');
+  });
+
+  it('falls back to filename dedupe and keep both uses -1 suffix', async () => {
+    const res = makeReservoir();
+
+    const fetcherPath = path.join(tmpDir, 'keep-both-fetcher.sh');
+    fs.writeFileSync(
+      fetcherPath,
+      [
+        '#!/bin/sh',
+        'cat <<\'EOF\' > outs/dup.md',
+        'no frontmatter id present',
+        'EOF',
+      ].join('\n'),
+      'utf-8',
+    );
+    fs.chmodSync(fetcherPath, 0o755);
+    const registered = res.addFetcher(fetcherPath);
+
+    const ch = res.addChannel({
+      name: 'Keep both duplicates',
+      fetchMethod: registered.name,
+      idField: 'externalId',
+      duplicateStrategy: 'keep both',
+    });
+
+    await res.fetchChannel(ch.id);
+    await res.fetchChannel(ch.id);
+
+    const contentDir = path.join(channelDirForId(ch.id), 'content');
+    const markdownFiles = fs
+      .readdirSync(contentDir)
+      .filter((name) => name.toLowerCase().endsWith('.md'))
+      .sort();
+
+    expect(markdownFiles).toEqual(['dup-1.md', 'dup.md']);
+    expect(res.listContent({ channelIds: [ch.id] })).toHaveLength(2);
+  });
 });
 
 // ─── editChannel ─────────────────────────────────────────────────────────────
@@ -370,6 +464,19 @@ describe('editChannel', () => {
     const res = makeReservoir();
     const ch = res.addChannel({ name: 'Old', fetchMethod: FetchMethod.RSS, url: 'u' });
     expect(() => res.editChannel(ch.id, { retainedLocks: ['bad,name'] })).toThrow('commas are not allowed');
+  });
+
+  it('updates idField and duplicateStrategy', () => {
+    const res = makeReservoir();
+    const ch = res.addChannel({ name: 'Old', fetchMethod: FetchMethod.RSS, url: 'u' });
+
+    const updated = res.editChannel(ch.id, {
+      idField: 'externalId',
+      duplicateStrategy: 'overwrite',
+    });
+
+    expect(updated.idField).toBe('externalId');
+    expect(updated.duplicateStrategy).toBe('overwrite');
   });
 });
 

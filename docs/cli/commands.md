@@ -47,7 +47,9 @@ Manage channels.
 res channel add <name> --type <type> \
   [--fetch-arg <key=value> ...] \
   [--rate-limit <seconds>] \
-  [--refresh-interval <seconds>]
+  [--refresh-interval <seconds>] \
+  [--id-field <field>] \
+  [--duplicate-strategy <overwrite|keep both>]
 ```
 
 Options:
@@ -61,6 +63,11 @@ Options:
   - `web_page`: include `--fetch-arg url=<page-url>`
 - `--rate-limit <seconds>`: rate-limit interval
 - `--refresh-interval <seconds>`: background refresh interval (default is 24h)
+- `--id-field <field>`: optional frontmatter field name used as the per-channel unique content identifier
+  - when the field is missing on an item, deduplication falls back to filename
+- `--duplicate-strategy <overwrite|keep both>`: controls how duplicates are handled
+  - `overwrite`: replace the existing content item for the same dedupe key
+  - `keep both`: keep both files; duplicate filenames get `-1`, `-2`, etc. suffixes
 
 ### `channel edit`
 
@@ -70,10 +77,17 @@ res channel edit <id> \
   [--type <type>] \
   [--fetch-arg <key=value> ...] \
   [--rate-limit <seconds>] \
-  [--refresh-interval <seconds>]
+  [--refresh-interval <seconds>] \
+  [--id-field <field>] \
+  [--duplicate-strategy <overwrite|keep both>]
 ```
 
 Updates any provided fields on the channel.
+
+Deduplication fields:
+
+- `--id-field` sets or updates the frontmatter field used as the unique identifier
+- `--duplicate-strategy` sets duplicate handling to `overwrite` or `keep both`
 
 `--fetch-arg` edits are key-scoped:
 

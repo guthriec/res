@@ -24,7 +24,7 @@ Items consist of:
 - a markdown file, which may include frontmatter
 - optional supplementary static resources
 
-Each item must have a filename which is unique within its channel, which will also be the name of the directory containing related static resources. Items may also use frontmatter to specify canonical IDs for deduplication within their channel, under the `id` field.
+Each item must have a filename which is unique within its channel, which will also be the name of the directory containing related static resources. Channels can optionally configure an `idField` (a frontmatter key) for deduplication. If the configured field is missing, deduplication falls back to filename. Duplicate handling is controlled by channel `duplicateStrategy`: `overwrite` replaces existing content for the same dedupe key, while `keep both` keeps both files and appends `-1`, `-2`, etc. suffixes to duplicate filenames.
 
 All content is stored within a directory corresponding to its channel of origin.
 

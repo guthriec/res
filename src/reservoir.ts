@@ -5,10 +5,12 @@ import {
   ReservoirConfig,
   ChannelConfig,
   Channel,
+  DuplicateStrategy,
   ContentMetadata,
   ContentItem,
   FetchedContent,
   DEFAULT_REFRESH_INTERVAL_SECONDS,
+  DEFAULT_DUPLICATE_STRATEGY,
   GLOBAL_LOCK_NAME,
 } from './types';
 import { fetchRSS } from './fetchers/rss';
@@ -56,6 +58,11 @@ interface ParsedContentFile {
   filePath: string;
 }
 
+interface ExistingContentEntry {
+  filePath: string;
+  contentId?: string;
+}
+
 function normalizeFetchArgs(fetchArgs?: Record<string, string>): Record<string, string> {
   if (!fetchArgs || typeof fetchArgs !== 'object' || Array.isArray(fetchArgs)) return {};
   const normalized: Record<string, string> = {};
@@ -84,6 +91,47 @@ function contentFileSlug(title: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
   return slug || 'content';
+}
+
+function parseMaybeJsonString(value: string): string {
+  try {
+    const parsed = JSON.parse(value);
+    return typeof parsed === 'string' ? parsed : value;
+  } catch {
+    return value;
+  }
+}
+
+function parseInlineFrontmatter(rawContent: string): Record<string, string> {
+  if (!rawContent.startsWith('---\n')) return {};
+  const endIdx = rawContent.indexOf('\n---\n', 4);
+  if (endIdx === -1) return {};
+
+  const header = rawContent.slice(4, endIdx).split('\n');
+  const fields: Record<string, string> = {};
+
+  for (const line of header) {
+    const sep = line.indexOf(':');
+    if (sep === -1) continue;
+    const key = line.slice(0, sep).trim();
+    if (!key) continue;
+    const value = line.slice(sep + 1).trim();
+    fields[key] = parseMaybeJsonString(value);
+  }
+
+  return fields;
+}
+
+function normalizeIdField(idField?: string): string | undefined {
+  if (typeof idField !== 'string') return undefined;
+  const normalized = idField.trim();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeDuplicateStrategy(value?: DuplicateStrategy | string): DuplicateStrategy {
+  if (value === undefined) return DEFAULT_DUPLICATE_STRATEGY;
+  if (value === 'overwrite' || value === 'keep both') return value;
+  throw new Error(`Invalid duplicate strategy '${value}'. Expected 'overwrite' or 'keep both'.`);
 }
 
 function toFrontmatter(meta: ContentFrontmatter, content: string): string {
@@ -131,15 +179,6 @@ function parseFrontmatter(rawContent: string): { meta: ContentFrontmatter | null
     return { meta: null, content: rawContent };
   }
 
-  const parseMaybeJsonString = (value: string): string => {
-    try {
-      const parsed = JSON.parse(value);
-      return typeof parsed === 'string' ? parsed : value;
-    } catch {
-      return value;
-    }
-  };
-
   return {
     meta: {
       id: parseMaybeJsonString(id),
@@ -167,6 +206,8 @@ function normalizeChannel(rawChannel: Channel | (Omit<Channel, 'refreshInterval'
     fetchArgs: normalizeFetchArgs(raw.fetchArgs),
     rateLimitInterval: typeof raw.rateLimitInterval === 'number' ? raw.rateLimitInterval : undefined,
     refreshInterval,
+    idField: normalizeIdField(raw.idField),
+    duplicateStrategy: normalizeDuplicateStrategy(raw.duplicateStrategy),
     retainedLocks: normalizeLocks(rawChannel.retainedLocks),
   };
 }
@@ -325,6 +366,8 @@ export class Reservoir {
       fetchArgs: normalizeFetchArgs(config.fetchArgs),
       rateLimitInterval: config.rateLimitInterval,
       refreshInterval: config.refreshInterval ?? DEFAULT_REFRESH_INTERVAL_SECONDS,
+      idField: normalizeIdField(config.idField),
+      duplicateStrategy: normalizeDuplicateStrategy(config.duplicateStrategy),
       retainedLocks: normalizeLocks(config.retainedLocks, { validateNames: true }),
     };
 
@@ -338,6 +381,12 @@ export class Reservoir {
   editChannel(channelId: string, updates: Partial<ChannelConfig>): Channel {
     const existing = this.viewChannel(channelId);
     const normalizedUpdates: Partial<ChannelConfig> = { ...updates };
+    if (updates.idField !== undefined) {
+      normalizedUpdates.idField = normalizeIdField(updates.idField);
+    }
+    if (updates.duplicateStrategy !== undefined) {
+      normalizedUpdates.duplicateStrategy = normalizeDuplicateStrategy(updates.duplicateStrategy);
+    }
     if (updates.retainedLocks !== undefined) {
       normalizedUpdates.retainedLocks = normalizeLocks(updates.retainedLocks, { validateNames: true });
     }
@@ -408,9 +457,39 @@ export class Reservoir {
     const channelDir = this.resolveChannelDir(channelId);
     const contentDir = path.join(channelDir, CONTENT_DIR);
     const persisted: ContentItem[] = [];
+    const metadataById = new Map(metadata.items.map((entry) => [entry.id, entry]));
+    const existingByDedupeKey = this.buildExistingContentByDedupeKey(channelId, channel.idField);
 
     for (const item of fetched) {
-      const id = await this.idAllocator.nextId();
+      const dedupeKey = this.resolveDedupeKeyForFetchedItem(item, channel.idField);
+      const existingEntry = existingByDedupeKey.get(dedupeKey);
+      const shouldOverwrite = channel.duplicateStrategy === 'overwrite' && existingEntry !== undefined;
+
+      let id: string;
+      let locks: string[];
+      let contentPath: string;
+
+      if (shouldOverwrite && existingEntry) {
+        id = existingEntry.contentId ?? await this.idAllocator.nextId();
+        const existingState = metadataById.get(id);
+        if (existingState) {
+          locks = [...existingState.locks];
+        } else {
+          locks = [...channel.retainedLocks];
+          const lockState = { id, locks: [...locks] };
+          metadata.items.push(lockState);
+          metadataById.set(id, lockState);
+        }
+        contentPath = existingEntry.filePath;
+      } else {
+        id = await this.idAllocator.nextId();
+        locks = [...channel.retainedLocks];
+        const lockState = { id, locks: [...locks] };
+        metadata.items.push(lockState);
+        metadataById.set(id, lockState);
+        contentPath = this.createUniqueContentPath(contentDir, this.contentFileStemForFetchedItem(item));
+      }
+
       const fetchedAt = new Date().toISOString();
       const frontmatter: ContentFrontmatter = {
         id,
@@ -419,18 +498,16 @@ export class Reservoir {
         fetchedAt,
         url: item.url,
       };
-      const locks = [...channel.retainedLocks];
-      metadata.items.push({ id, locks });
-      const contentPath = this.createUniqueContentPath(contentDir, item.title);
       fs.writeFileSync(contentPath, toFrontmatter(frontmatter, item.content));
+      existingByDedupeKey.set(dedupeKey, { filePath: contentPath, contentId: id });
 
-      if (Array.isArray(item.supplementaryFiles) && item.supplementaryFiles.length > 0) {
-        const contentFileName = item.sourceFileName ?? path.basename(contentPath);
-        const resourceDirectoryName = contentFileName.toLowerCase().endsWith('.md')
-          ? contentFileName.slice(0, -3)
-          : contentFileName;
-        if (resourceDirectoryName.length > 0) {
-          const destinationRoot = path.join(contentDir, resourceDirectoryName);
+      const resourceDirectoryName = path.basename(contentPath, '.md');
+      if (resourceDirectoryName.length > 0) {
+        const destinationRoot = path.join(contentDir, resourceDirectoryName);
+        if (shouldOverwrite && fs.existsSync(destinationRoot)) {
+          fs.rmSync(destinationRoot, { recursive: true, force: true });
+        }
+        if (Array.isArray(item.supplementaryFiles) && item.supplementaryFiles.length > 0) {
           for (const file of item.supplementaryFiles) {
             const destinationPath = path.join(destinationRoot, file.relativePath);
             fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
@@ -820,10 +897,52 @@ export class Reservoir {
     }, 0);
   }
 
-  private createUniqueContentPath(contentDir: string, title: string): string {
-    const base = contentFileSlug(title);
+  private contentFileStemForFetchedItem(item: FetchedContent): string {
+    if (item.sourceFileName && item.sourceFileName.trim().length > 0) {
+      return path.basename(item.sourceFileName, path.extname(item.sourceFileName));
+    }
+    return contentFileSlug(item.title);
+  }
+
+  private resolveDedupeKeyForFetchedItem(item: FetchedContent, idField?: string): string {
+    const configuredIdField = normalizeIdField(idField);
+    if (configuredIdField) {
+      const fields = parseInlineFrontmatter(item.content);
+      const value = fields[configuredIdField]?.trim();
+      if (value && value.length > 0) {
+        return value;
+      }
+    }
+    return this.contentFileStemForFetchedItem(item);
+  }
+
+  private buildExistingContentByDedupeKey(channelId: string, idField?: string): Map<string, ExistingContentEntry> {
+    const configuredIdField = normalizeIdField(idField);
+    const entries = new Map<string, ExistingContentEntry>();
+    const parsedById = this.readContentFilesById(channelId);
+
+    for (const parsed of parsedById.values()) {
+      let key: string | undefined;
+      if (configuredIdField) {
+        const bodyFields = parseInlineFrontmatter(parsed.content);
+        const bodyValue = bodyFields[configuredIdField]?.trim();
+        if (bodyValue && bodyValue.length > 0) {
+          key = bodyValue;
+        }
+      }
+      if (!key) {
+        key = path.basename(parsed.filePath, '.md');
+      }
+      entries.set(key, { filePath: parsed.filePath, contentId: parsed.meta.id });
+    }
+
+    return entries;
+  }
+
+  private createUniqueContentPath(contentDir: string, fileStem: string): string {
+    const base = contentFileSlug(fileStem);
     let candidate = path.join(contentDir, `${base}.md`);
-    let suffix = 2;
+    let suffix = 1;
     while (fs.existsSync(candidate)) {
       candidate = path.join(contentDir, `${base}-${suffix}.md`);
       suffix += 1;
@@ -871,7 +990,7 @@ export class Reservoir {
         url: item.url,
       };
       const body = parsed.meta ? parsed.content : raw;
-      const targetPath = this.createUniqueContentPath(contentDir, item.title);
+      const targetPath = this.createUniqueContentPath(contentDir, contentFileSlug(item.title));
       fs.writeFileSync(targetPath, toFrontmatter(frontmatter, body));
       if (targetPath !== legacyPath) {
         fs.unlinkSync(legacyPath);

@@ -5,6 +5,9 @@ export enum FetchMethod {
 
 export const DEFAULT_REFRESH_INTERVAL_SECONDS = 24 * 60 * 60;
 export const GLOBAL_LOCK_NAME = '[global]';
+export const DEFAULT_DUPLICATE_STRATEGY = 'keep both' as const;
+
+export type DuplicateStrategy = 'overwrite' | 'keep both';
 
 export interface ReservoirConfig {
   maxSizeMB?: number;
@@ -20,6 +23,10 @@ export interface ChannelConfig {
   rateLimitInterval?: number;
   /** Background refresh interval in seconds (defaults to 24h if omitted) */
   refreshInterval?: number;
+  /** Optional frontmatter field used to identify duplicates within a channel */
+  idField?: string;
+  /** Duplicate handling strategy (defaults to keep both) */
+  duplicateStrategy?: DuplicateStrategy;
   /** Lock names to apply automatically to newly fetched content */
   retainedLocks?: string[];
 }
@@ -28,6 +35,7 @@ export interface Channel extends Omit<ChannelConfig, 'refreshInterval' | 'retain
   id: string;
   createdAt: string;
   refreshInterval: number;
+  duplicateStrategy: DuplicateStrategy;
   retainedLocks: string[];
 }
 

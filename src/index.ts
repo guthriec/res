@@ -2,6 +2,8 @@ export { Reservoir } from './reservoir';
 export {
   FetchMethod,
   GLOBAL_LOCK_NAME,
+  DEFAULT_DUPLICATE_STRATEGY,
+  type DuplicateStrategy,
   type ReservoirConfig,
   type ChannelConfig,
   type Channel,
