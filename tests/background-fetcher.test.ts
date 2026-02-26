@@ -3,7 +3,9 @@ import * as os from 'os';
 import * as path from 'path';
 import {
   createBackgroundFetcherState,
+  getBackgroundFetcherStatusPath,
   getBackgroundFetcherStatus,
+  readBackgroundFetcherStatusFile,
   runScheduledFetchTick,
   startBackgroundFetcher,
   stopBackgroundFetcher,
@@ -27,7 +29,7 @@ function mkChannel(overrides: Partial<Channel> = {}): Channel {
     createdAt: overrides.createdAt ?? new Date().toISOString(),
     name: overrides.name ?? 'Channel',
     fetchMethod: overrides.fetchMethod ?? FetchMethod.RSS,
-    url: overrides.url ?? 'https://example.com/feed',
+    fetchArgs: overrides.fetchArgs ?? { url: 'https://example.com/feed' },
     rateLimitInterval: overrides.rateLimitInterval,
     refreshInterval: overrides.refreshInterval ?? DEFAULT_REFRESH_INTERVAL_SECONDS,
     retainedLocks: overrides.retainedLocks ?? [],
@@ -102,6 +104,136 @@ describe('runScheduledFetchTick', () => {
 
     await runScheduledFetchTick(reservoir, state, t0 + 1000);
     expect(state.lastErrorByChannel.scheduled).toBeUndefined();
+  });
+
+  it('does not retry within rate-limit interval after a failed scheduled refresh', async () => {
+    const fetchChannel = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce([]);
+
+    const reservoir = {
+      listChannels: () => [mkChannel({ id: 'scheduled', refreshInterval: 1, rateLimitInterval: 10 })],
+      fetchChannel,
+    };
+
+    const state = createBackgroundFetcherState();
+    const t0 = new Date('2026-01-01T00:00:00.000Z').getTime();
+
+    await runScheduledFetchTick(reservoir, state, t0);
+    expect(state.lastErrorByChannel.scheduled).toBe('boom');
+
+    await runScheduledFetchTick(reservoir, state, t0 + 9000);
+    expect(fetchChannel).toHaveBeenCalledTimes(1);
+    expect(state.lastErrorByChannel.scheduled).toBe('boom');
+
+    await runScheduledFetchTick(reservoir, state, t0 + 10000);
+    expect(fetchChannel).toHaveBeenCalledTimes(2);
+    expect(state.lastErrorByChannel.scheduled).toBeUndefined();
+  });
+
+  it('does not retry until refresh interval when refresh interval exceeds rate limit', async () => {
+    const fetchChannel = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce([]);
+
+    const reservoir = {
+      listChannels: () => [mkChannel({ id: 'scheduled', refreshInterval: 10, rateLimitInterval: 3 })],
+      fetchChannel,
+    };
+
+    const state = createBackgroundFetcherState();
+    const t0 = new Date('2026-01-01T00:00:00.000Z').getTime();
+
+    await runScheduledFetchTick(reservoir, state, t0);
+    expect(state.lastErrorByChannel.scheduled).toBe('boom');
+
+    await runScheduledFetchTick(reservoir, state, t0 + 3000);
+    expect(fetchChannel).toHaveBeenCalledTimes(1);
+    expect(state.lastErrorByChannel.scheduled).toBe('boom');
+
+    await runScheduledFetchTick(reservoir, state, t0 + 9999);
+    expect(fetchChannel).toHaveBeenCalledTimes(1);
+
+    await runScheduledFetchTick(reservoir, state, t0 + 10000);
+    expect(fetchChannel).toHaveBeenCalledTimes(2);
+    expect(state.lastErrorByChannel.scheduled).toBeUndefined();
+  });
+
+  it('retries immediately after restart when previous scheduled refresh failed', async () => {
+    const fetchChannel = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce([]);
+
+    const reservoir = {
+      listChannels: () => [mkChannel({ id: 'scheduled', refreshInterval: 1, rateLimitInterval: 1 })],
+      fetchChannel,
+    };
+
+    const firstRunState = createBackgroundFetcherState();
+    const t0 = new Date('2026-01-01T00:00:00.000Z').getTime();
+
+    await runScheduledFetchTick(reservoir, firstRunState, t0);
+    expect(firstRunState.lastErrorByChannel.scheduled).toBe('boom');
+
+    const restartedState = createBackgroundFetcherState({
+      startedAt: firstRunState.startedAt,
+      lastFetchAtByChannel: firstRunState.lastFetchAtByChannel,
+      lastErrorByChannel: firstRunState.lastErrorByChannel,
+    });
+
+    await runScheduledFetchTick(reservoir, restartedState, t0 + 1000);
+
+    expect(fetchChannel).toHaveBeenCalledTimes(2);
+    expect(restartedState.lastErrorByChannel.scheduled).toBeUndefined();
+  });
+
+  it('rehydrates failed status on restart and retries immediately on next scheduled tick', async () => {
+    const fetchChannel = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce([]);
+
+    const reservoir = {
+      listChannels: () => [mkChannel({ id: 'scheduled', refreshInterval: 1, rateLimitInterval: 1 })],
+      fetchChannel,
+    };
+
+    const t0 = new Date('2026-01-01T00:00:00.000Z').getTime();
+    const firstRunState = createBackgroundFetcherState();
+
+    await runScheduledFetchTick(reservoir, firstRunState, t0);
+    expect(firstRunState.lastErrorByChannel.scheduled).toBe('boom');
+
+    fs.writeFileSync(
+      getBackgroundFetcherStatusPath(tmpDir),
+      JSON.stringify(
+        {
+          pid: process.pid,
+          startedAt: firstRunState.startedAt,
+          lastHeartbeatAt: new Date(t0).toISOString(),
+          lastFetchAtByChannel: firstRunState.lastFetchAtByChannel,
+          lastErrorByChannel: firstRunState.lastErrorByChannel,
+        },
+        null,
+        2,
+      ),
+      'utf-8',
+    );
+
+    const existing = readBackgroundFetcherStatusFile(tmpDir);
+    const restartedState = createBackgroundFetcherState({
+      startedAt: existing?.startedAt,
+      lastFetchAtByChannel: existing?.lastFetchAtByChannel,
+      lastErrorByChannel: existing?.lastErrorByChannel,
+    });
+
+    await runScheduledFetchTick(reservoir, restartedState, t0 + 1000);
+
+    expect(fetchChannel).toHaveBeenCalledTimes(2);
+    expect(restartedState.lastErrorByChannel.scheduled).toBeUndefined();
   });
 });
 

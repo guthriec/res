@@ -4,6 +4,7 @@ import * as path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { FetchedContent } from '../types';
+import { fetchArgObjectToCliArgs } from '../fetch-args';
 
 const execFileAsync = promisify(execFile);
 
@@ -52,7 +53,7 @@ function collectSupplementaryFiles(resourcesRoot: string): Array<{ relativePath:
 export async function fetchCustom(
   executablePath: string,
   channelId: string,
-  fetchArgs: string[] = [],
+  fetchArgs: Record<string, string> | undefined,
 ): Promise<FetchedContent[]> {
   const executableAbsolutePath = path.resolve(executablePath);
   if (!fs.existsSync(executableAbsolutePath)) {
@@ -64,7 +65,7 @@ export async function fetchCustom(
   fs.mkdirSync(outsDir, { recursive: true });
 
   try {
-    await execFileAsync(executableAbsolutePath, fetchArgs, {
+    await execFileAsync(executableAbsolutePath, fetchArgObjectToCliArgs(fetchArgs), {
       cwd: tempDir,
       env: {
         ...process.env,

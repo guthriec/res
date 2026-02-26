@@ -2,6 +2,7 @@ import TurndownService from 'turndown';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { Readability } from '@mozilla/readability';
 import { FetchedContent } from '../types';
+import { getFetchArgValue } from '../fetch-args';
 
 const td = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced' });
 const virtualConsole = new VirtualConsole();
@@ -38,10 +39,10 @@ export async function fetchWebPageMarkdown(url: string): Promise<string> {
   return convertWebPageHtmlToMarkdown(html);
 }
 
-export async function fetchWebPage(fetchArgs: string[], _channelId: string): Promise<FetchedContent[]> {
-  const url = fetchArgs[0];
+export async function fetchWebPage(fetchArgs: Record<string, string> | undefined, _channelId: string): Promise<FetchedContent[]> {
+  const url = getFetchArgValue(fetchArgs, 'url');
   if (!url) {
-    throw new Error('web_page fetcher requires a URL as the first fetch argument');
+    throw new Error('web_page fetcher requires --fetch-arg url=<page-url>');
   }
   const response = await fetch(url);
   if (!response.ok) {

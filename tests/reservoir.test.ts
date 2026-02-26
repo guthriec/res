@@ -156,6 +156,24 @@ describe('Reservoir.load', () => {
   });
 });
 
+describe('Reservoir.loadNearest', () => {
+  it('loads nearest reservoir from a nested child directory', () => {
+    Reservoir.initialize(tmpDir, { maxSizeMB: 7 });
+    const nestedDir = path.join(tmpDir, 'a', 'b', 'c');
+    fs.mkdirSync(nestedDir, { recursive: true });
+
+    const loaded = Reservoir.loadNearest(nestedDir);
+    expect(loaded.directory).toBe(tmpDir);
+    expect(loaded.reservoirConfig).toEqual({ maxSizeMB: 7 });
+  });
+
+  it('throws when no initialized reservoir exists in parent chain', () => {
+    const startDir = path.join(tmpDir, 'x', 'y');
+    fs.mkdirSync(startDir, { recursive: true });
+    expect(() => Reservoir.loadNearest(startDir)).toThrow('No reservoir found from');
+  });
+});
+
 // ─── addChannel ──────────────────────────────────────────────────────────────
 
 describe('addChannel', () => {
@@ -213,6 +231,16 @@ describe('addChannel', () => {
     expect(first.id).toBe('same-name');
     expect(second.id).toBe('same-name-2');
     expect(path.basename(channelDirForId(second.id))).toBe('same-name-2');
+  });
+
+  it('rejects retainedLocks with comma-separated names in addChannel', () => {
+    const res = makeReservoir();
+    expect(() => res.addChannel({
+      name: 'Bad Locks',
+      fetchMethod: FetchMethod.RSS,
+      url: 'u',
+      retainedLocks: ['bad,name'],
+    })).toThrow('commas are not allowed');
   });
 });
 
@@ -322,10 +350,10 @@ describe('fetchChannel', () => {
 describe('editChannel', () => {
   it('updates channel fields', () => {
     const res = makeReservoir();
-    const ch = res.addChannel({ name: 'Old', fetchMethod: FetchMethod.RSS, url: 'u' });
-    const updated = res.editChannel(ch.id, { name: 'New', url: 'https://new.com' });
+    const ch = res.addChannel({ name: 'Old', fetchMethod: FetchMethod.RSS, fetchArgs: { url: 'u' } });
+    const updated = res.editChannel(ch.id, { name: 'New', fetchArgs: { url: 'https://new.com' } });
     expect(updated.name).toBe('New');
-    expect(updated.url).toBe('https://new.com');
+    expect(updated.fetchArgs.url).toBe('https://new.com');
     // Original fields preserved
     expect(updated.id).toBe(ch.id);
   });
@@ -336,6 +364,12 @@ describe('editChannel', () => {
     res.editChannel(ch.id, { name: 'Persisted' });
     const reloaded = Reservoir.load(tmpDir).viewChannel(ch.id);
     expect(reloaded.name).toBe('Persisted');
+  });
+
+  it('rejects retainedLocks with comma-separated names in editChannel', () => {
+    const res = makeReservoir();
+    const ch = res.addChannel({ name: 'Old', fetchMethod: FetchMethod.RSS, url: 'u' });
+    expect(() => res.editChannel(ch.id, { retainedLocks: ['bad,name'] })).toThrow('commas are not allowed');
   });
 });
 
@@ -410,6 +444,53 @@ describe('listRetained', () => {
   });
 });
 
+describe('listContent', () => {
+  it('filters unretained items with retained=false', () => {
+    const res = makeReservoir();
+    const ch = res.addChannel({ name: 'Mixed', fetchMethod: FetchMethod.RSS, url: 'u' });
+    addTestItem(res, ch.id, { id: 'u1', locks: [] });
+    addTestItem(res, ch.id, { id: 'r1', locks: ['pin'] });
+
+    const unretained = res.listContent({ retained: false });
+    expect(unretained).toHaveLength(1);
+    expect(unretained[0].id).toBe('u1');
+  });
+
+  it('filters retained items by specific lock name', () => {
+    const res = makeReservoir();
+    const ch = res.addChannel({ name: 'Locks', fetchMethod: FetchMethod.RSS, url: 'u' });
+    addTestItem(res, ch.id, { id: 'l1', locks: ['alpha'] });
+    addTestItem(res, ch.id, { id: 'l2', locks: ['beta'] });
+    addTestItem(res, ch.id, { id: 'l3', locks: ['alpha', 'beta'] });
+
+    const alpha = res.listContent({ retained: true, retainedBy: ['alpha'] });
+    expect(alpha.map((item) => item.id)).toEqual(['l1', 'l3']);
+  });
+
+  it('filters retained items by multiple lock names', () => {
+    const res = makeReservoir();
+    const ch = res.addChannel({ name: 'Multi-locks', fetchMethod: FetchMethod.RSS, url: 'u' });
+    addTestItem(res, ch.id, { id: 'm1', locks: ['alpha'] });
+    addTestItem(res, ch.id, { id: 'm2', locks: ['beta'] });
+    addTestItem(res, ch.id, { id: 'm3', locks: ['gamma'] });
+
+    const filtered = res.listContent({ retained: true, retainedBy: ['alpha', 'beta'] });
+    expect(filtered.map((item) => item.id)).toEqual(['m1', 'm2']);
+  });
+
+  it('supports pagination with pageSize and pageOffset', () => {
+    const res = makeReservoir();
+    const ch = res.addChannel({ name: 'Paging', fetchMethod: FetchMethod.RSS, url: 'u' });
+    addTestItem(res, ch.id, { id: 'p1', locks: ['pin'] });
+    addTestItem(res, ch.id, { id: 'p2', locks: ['pin'] });
+    addTestItem(res, ch.id, { id: 'p3', locks: ['pin'] });
+
+    const page = res.listContent({ retained: true, pageOffset: 1, pageSize: 1 });
+    expect(page).toHaveLength(1);
+    expect(page[0].id).toBe('p2');
+  });
+});
+
 // ─── retain/release content ─────────────────────────────────────────────────-
 
 describe('retainContent / releaseContent', () => {
@@ -445,6 +526,13 @@ describe('retainContent / releaseContent', () => {
     const res = makeReservoir();
     expect(() => res.retainContent('no-such-id')).toThrow('Content not found');
   });
+
+  it('rejects lock names containing commas', () => {
+    const res = makeReservoir();
+    const ch = res.addChannel({ name: 'M', fetchMethod: FetchMethod.RSS, url: 'u' });
+    addTestItem(res, ch.id, { id: 'r4', locks: [] });
+    expect(() => res.retainContent('r4', 'bad,name')).toThrow('commas are not allowed');
+  });
 });
 
 // ─── retain/release channel ─────────────────────────────────────────────────-
@@ -469,6 +557,12 @@ describe('retainChannel / releaseChannel', () => {
     const ch = res.addChannel({ name: 'M', fetchMethod: FetchMethod.RSS, url: 'u' });
     const updated = res.retainChannel(ch.id);
     expect(updated.retainedLocks).toContain(GLOBAL_LOCK_NAME);
+  });
+
+  it('retainChannel rejects lock names containing commas', () => {
+    const res = makeReservoir();
+    const ch = res.addChannel({ name: 'M', fetchMethod: FetchMethod.RSS, url: 'u' });
+    expect(() => res.retainChannel(ch.id, 'bad,name')).toThrow('commas are not allowed');
   });
 });
 

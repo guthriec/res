@@ -56,6 +56,18 @@ interface ParsedContentFile {
   filePath: string;
 }
 
+function normalizeFetchArgs(fetchArgs?: Record<string, string>): Record<string, string> {
+  if (!fetchArgs || typeof fetchArgs !== 'object' || Array.isArray(fetchArgs)) return {};
+  const normalized: Record<string, string> = {};
+  for (const [rawKey, rawValue] of Object.entries(fetchArgs)) {
+    if (typeof rawValue !== 'string') continue;
+    const key = rawKey.trim();
+    if (!key) continue;
+    normalized[key] = rawValue.trim();
+  }
+  return normalized;
+}
+
 function channelDirectorySlug(name: string): string {
   const slug = name
     .trim()
@@ -141,18 +153,19 @@ function parseFrontmatter(rawContent: string): { meta: ContentFrontmatter | null
 }
 
 function normalizeChannel(rawChannel: Channel | (Omit<Channel, 'refreshInterval'> & { refreshInterval?: number })): Channel {
-  const { retentionStrategy: _retentionStrategy, ...rest } = rawChannel as Channel & { retentionStrategy?: unknown };
-  const rawRefresh = rest.refreshInterval;
+  const raw = rawChannel as Channel & { retentionStrategy?: unknown };
+  const rawRefresh = raw.refreshInterval;
   const refreshInterval =
     typeof rawRefresh === 'number' && Number.isFinite(rawRefresh) && rawRefresh > 0
       ? rawRefresh
       : DEFAULT_REFRESH_INTERVAL_SECONDS;
-  const fetchArgs = Array.isArray(rest.fetchArgs)
-    ? rest.fetchArgs.filter((value) => typeof value === 'string').map((value) => value.trim()).filter((value) => value.length > 0)
-    : [];
   return {
-    ...rest,
-    fetchArgs,
+    id: raw.id,
+    createdAt: raw.createdAt,
+    name: raw.name,
+    fetchMethod: raw.fetchMethod,
+    fetchArgs: normalizeFetchArgs(raw.fetchArgs),
+    rateLimitInterval: typeof raw.rateLimitInterval === 'number' ? raw.rateLimitInterval : undefined,
     refreshInterval,
     retainedLocks: normalizeLocks(rawChannel.retainedLocks),
   };
@@ -161,16 +174,23 @@ function normalizeChannel(rawChannel: Channel | (Omit<Channel, 'refreshInterval'
 function normalizeLockName(lockName?: string): string {
   if (lockName === undefined) return GLOBAL_LOCK_NAME;
   const normalized = lockName.trim();
+  if (normalized.includes(',')) {
+    throw new Error("Invalid lock name: commas are not allowed");
+  }
   return normalized.length > 0 ? normalized : GLOBAL_LOCK_NAME;
 }
 
-function normalizeLocks(lockNames?: string[]): string[] {
+function normalizeLocks(lockNames?: string[], options: { validateNames?: boolean } = {}): string[] {
   if (!Array.isArray(lockNames) || lockNames.length === 0) return [];
+  const validateNames = options.validateNames ?? false;
   const unique = new Set<string>();
   for (const lockName of lockNames) {
     if (typeof lockName !== 'string') continue;
     const normalized = lockName.trim();
     if (!normalized) continue;
+    if (validateNames && normalized.includes(',')) {
+      throw new Error("Invalid lock name: commas are not allowed");
+    }
     unique.add(normalized);
   }
   return [...unique];
@@ -216,6 +236,34 @@ export class Reservoir {
     }
     const config = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as ReservoirConfig;
     return new Reservoir(absDir, config);
+  }
+
+  /**
+   * Find and load the nearest initialized reservoir by searching the given directory
+   * and its parent directories.
+   */
+  static loadNearest(startDir: string = process.cwd()): Reservoir {
+    const nearestDir = Reservoir.findNearestDirectory(startDir);
+    if (!nearestDir) {
+      const absStart = path.resolve(startDir);
+      throw new Error(`No reservoir found from ${absStart} upward. Run 'res init' in this directory or pass --dir <path>.`);
+    }
+    return Reservoir.load(nearestDir);
+  }
+
+  private static findNearestDirectory(startDir: string): string | null {
+    let current = path.resolve(startDir);
+    while (true) {
+      const configPath = path.join(current, CONFIG_FILE);
+      if (fs.existsSync(configPath)) {
+        return current;
+      }
+      const parent = path.dirname(current);
+      if (parent === current) {
+        return null;
+      }
+      current = parent;
+    }
   }
 
   get directory(): string {
@@ -272,9 +320,12 @@ export class Reservoir {
     const channel: Channel = {
       id: channelDirName,
       createdAt: new Date().toISOString(),
-      ...config,
+      name: config.name,
+      fetchMethod: config.fetchMethod,
+      fetchArgs: normalizeFetchArgs(config.fetchArgs),
+      rateLimitInterval: config.rateLimitInterval,
       refreshInterval: config.refreshInterval ?? DEFAULT_REFRESH_INTERVAL_SECONDS,
-      retainedLocks: normalizeLocks(config.retainedLocks),
+      retainedLocks: normalizeLocks(config.retainedLocks, { validateNames: true }),
     };
 
     const channelDir = path.join(channelsDir, channelDirName);
@@ -286,7 +337,11 @@ export class Reservoir {
 
   editChannel(channelId: string, updates: Partial<ChannelConfig>): Channel {
     const existing = this.viewChannel(channelId);
-    const updated: Channel = normalizeChannel({ ...existing, ...updates });
+    const normalizedUpdates: Partial<ChannelConfig> = { ...updates };
+    if (updates.retainedLocks !== undefined) {
+      normalizedUpdates.retainedLocks = normalizeLocks(updates.retainedLocks, { validateNames: true });
+    }
+    const updated: Channel = normalizeChannel({ ...existing, ...normalizedUpdates });
     const channelDir = this.resolveChannelDir(channelId);
     fs.writeFileSync(path.join(channelDir, CHANNEL_CONFIG_FILE), JSON.stringify(updated, null, 2));
     return updated;
@@ -333,7 +388,7 @@ export class Reservoir {
 
   async fetchChannel(channelId: string): Promise<ContentItem[]> {
     const channel = this.viewChannel(channelId);
-    const fetchArgs = Array.isArray(channel.fetchArgs) ? channel.fetchArgs : [];
+    const fetchArgs = channel.fetchArgs;
     let fetched: FetchedContent[];
 
     switch (channel.fetchMethod) {
@@ -400,13 +455,33 @@ export class Reservoir {
 
   // ─── Content management ───────────────────────────────────────────────────
 
-  listRetained(channelIds?: string[]): ContentItem[] {
-    const channels = channelIds ? channelIds.map((id) => this.viewChannel(id)) : this.listChannels();
+  listContent(options: {
+    channelIds?: string[];
+    retained?: boolean;
+    retainedBy?: string[];
+    pageSize?: number;
+    pageOffset?: number;
+  } = {}): ContentItem[] {
+    const channels = options.channelIds ? options.channelIds.map((id) => this.viewChannel(id)) : this.listChannels();
+    const retained = options.retained;
+    const normalizedRetainedBy = options.retainedBy
+      ?.map((name) => name.trim())
+      .filter((name) => name.length > 0);
+    const retainedBySet = normalizedRetainedBy && normalizedRetainedBy.length > 0
+      ? new Set(normalizedRetainedBy)
+      : undefined;
+    const pageOffset = options.pageOffset ?? 0;
+    const pageSize = options.pageSize;
+
     const results: ContentItem[] = [];
     for (const channel of channels) {
       const parsedById = this.readContentFilesById(channel.id);
       for (const state of this.loadMetadata(channel.id).items) {
-        if (state.locks.length === 0) continue;
+        const isRetained = state.locks.length > 0;
+        if (retained === true && !isRetained) continue;
+        if (retained === false && isRetained) continue;
+        if (retainedBySet && !state.locks.some((name) => retainedBySet.has(name))) continue;
+
         const parsed = parsedById.get(state.id);
         if (!parsed) continue;
         const relativePath = path.relative(this.dir, parsed.filePath);
@@ -418,7 +493,16 @@ export class Reservoir {
         });
       }
     }
-    return results;
+
+    if (pageSize === undefined) {
+      return results.slice(pageOffset);
+    }
+
+    return results.slice(pageOffset, pageOffset + pageSize);
+  }
+
+  listRetained(channelIds?: string[]): ContentItem[] {
+    return this.listContent({ channelIds, retained: true });
   }
 
   retainContent(contentId: string, lockName?: string): void {

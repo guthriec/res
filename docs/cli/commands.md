@@ -7,18 +7,21 @@ All commands support `--help`.
 - Program name: `res`
 - Version: `0.1.0`
 - Description: collect web content into local markdown directories
+- Global option: `--dir <path>`
+  - Use as `res --dir <path> <command> ...`
+  - For `res init`, omitted `--dir` defaults to the current working directory
+  - For all other commands, omitted `--dir` searches from the current working directory upward for the nearest initialized reservoir
 
 ## `init`
 
 Initialize a reservoir directory.
 
 ```bash
-res init [--dir <path>] [--max-size <mb>]
+res init [--max-size <mb>]
 ```
 
 Options:
 
-- `--dir <path>`: directory to initialize (default: current working directory)
 - `--max-size <mb>`: max total content size in MB for `clean`
 
 ## `add-fetcher`
@@ -26,12 +29,8 @@ Options:
 Register a custom fetcher executable in user config.
 
 ```bash
-res add-fetcher <executable> [--dir <path>]
+res add-fetcher <executable>
 ```
-
-Options:
-
-- `--dir <path>`: reservoir directory (default: current working directory)
 
 Behavior:
 
@@ -46,10 +45,9 @@ Manage channels.
 
 ```bash
 res channel add <name> --type <type> \
-  [--fetch-arg <value> ...] \
+  [--fetch-arg <key=value> ...] \
   [--rate-limit <seconds>] \
-  [--refresh-interval <seconds>] \
-  [--dir <path>]
+  [--refresh-interval <seconds>]
 ```
 
 Options:
@@ -57,10 +55,12 @@ Options:
 - `--type <type>`: required; one of:
   - built-in: `rss`, `web_page`
   - custom: registered fetcher name
-- `--fetch-arg <value>`: repeatable fetcher argument
+- `--fetch-arg <key=value>`: repeatable fetcher argument (always key/value)
+- For built-in fetchers:
+  - `rss`: include `--fetch-arg url=<feed-url>`
+  - `web_page`: include `--fetch-arg url=<page-url>`
 - `--rate-limit <seconds>`: rate-limit interval
 - `--refresh-interval <seconds>`: background refresh interval (default is 24h)
-- `--dir <path>`: reservoir directory
 
 ### `channel edit`
 
@@ -68,18 +68,23 @@ Options:
 res channel edit <id> \
   [--name <name>] \
   [--type <type>] \
-  [--fetch-arg <value> ...] \
+  [--fetch-arg <key=value> ...] \
   [--rate-limit <seconds>] \
-  [--refresh-interval <seconds>] \
-  [--dir <path>]
+  [--refresh-interval <seconds>]
 ```
 
 Updates any provided fields on the channel.
 
+`--fetch-arg` edits are key-scoped:
+
+- Only provided keys are updated
+- Omitted keys are left unchanged
+- A blank value removes that key (for example `--fetch-arg timeout=`)
+
 ### `channel delete`
 
 ```bash
-res channel delete <id> [--dir <path>]
+res channel delete <id>
 ```
 
 Deletes the channel and all content under it.
@@ -87,7 +92,7 @@ Deletes the channel and all content under it.
 ### `channel view`
 
 ```bash
-res channel view <id> [--dir <path>]
+res channel view <id>
 ```
 
 Prints channel JSON.
@@ -95,7 +100,7 @@ Prints channel JSON.
 ### `channel list`
 
 ```bash
-res channel list [--dir <path>]
+res channel list
 ```
 
 Prints JSON array of channels with an additional `path` field (`channels/<channel-id>`).
@@ -105,7 +110,7 @@ Prints JSON array of channels with an additional `path` field (`channels/<channe
 ### `start`
 
 ```bash
-res start [--dir <path>]
+res start
 ```
 
 Runs background fetching in the current process.
@@ -113,7 +118,7 @@ Runs background fetching in the current process.
 ### `status`
 
 ```bash
-res status [--dir <path>]
+res status
 ```
 
 Shows process status JSON when running, otherwise prints `Background fetcher is not running`.
@@ -121,7 +126,7 @@ Shows process status JSON when running, otherwise prints `Background fetcher is 
 ### `stop`
 
 ```bash
-res stop [--dir <path>]
+res stop
 ```
 
 Stops the running background fetcher process for the reservoir.
@@ -133,7 +138,7 @@ Default lock name when omitted is `[global]`.
 ### `retain content`
 
 ```bash
-res retain content <id> [lockName] [--dir <path>]
+res retain content <id> [lockName]
 ```
 
 ### `retain range`
@@ -142,8 +147,7 @@ res retain content <id> [lockName] [--dir <path>]
 res retain range [lockName] \
   [--from <id>] \
   [--to <id>] \
-  [--channel <id>] \
-  [--dir <path>]
+  [--channel <id>]
 ```
 
 Notes:
@@ -154,7 +158,7 @@ Notes:
 ### `retain channel`
 
 ```bash
-res retain channel <id> [lockName] [--dir <path>]
+res retain channel <id> [lockName]
 ```
 
 Adds a channel-level lock applied automatically to newly fetched content.
@@ -162,7 +166,7 @@ Adds a channel-level lock applied automatically to newly fetched content.
 ### `release content`
 
 ```bash
-res release content <id> [lockName] [--dir <path>]
+res release content <id> [lockName]
 ```
 
 ### `release range`
@@ -171,39 +175,47 @@ res release content <id> [lockName] [--dir <path>]
 res release range [lockName] \
   [--from <id>] \
   [--to <id>] \
-  [--channel <id>] \
-  [--dir <path>]
+  [--channel <id>]
 ```
 
 ### `release channel`
 
 ```bash
-res release channel <id> [lockName] [--dir <path>]
+res release channel <id> [lockName]
 ```
 
 Removes a channel-level lock for newly fetched content.
 
-## `retained`
+## `list`
 
-List retained items.
+List content items with filters and pagination.
 
 ```bash
-res retained [--channels <ids>] [--dir <path>]
+res list \
+  [--channels <ids>] \
+  [--retained <true|false>] \
+  [--retained-by <names>] \
+  [--page-size <count>] \
+  [--page-offset <count>]
 ```
 
 Options:
 
 - `--channels <ids>`: comma-separated channel IDs to filter
-- `--dir <path>`: reservoir directory
+- `--retained <true|false>`: include retained or unretained content (default: `true`)
+- `--retained-by <names>`: only include content retained by one or more lock names (comma-separated; requires `--retained true`)
+  - if provided but empty, defaults to `[global]`
+- `--page-size <count>`: max number of matching items to return
+- `--page-offset <count>`: number of matching items to skip before returning results
 
-Output includes each retained item metadata and relative `filePath`.
+Output includes each item metadata and relative `filePath`.
 
 ## `clean`
 
 Delete unlocked content beyond configured max size.
 
 ```bash
-res clean [--dir <path>]
+res clean
 ```
 
 Behavior:

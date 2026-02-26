@@ -45,7 +45,7 @@ describe('fetchRSS', () => {
     });
 
     const { fetchRSS } = await import('../src/fetchers/rss');
-    const items = await fetchRSS(['https://example.com/feed'], 'chan-1');
+    const items = await fetchRSS({ url: 'https://example.com/feed' }, 'chan-1');
     expect(items).toHaveLength(2);
     expect(items[0].title).toBe('Article One');
     expect(items[0].url).toBe('https://example.com/1');
@@ -68,7 +68,7 @@ describe('fetchRSS', () => {
     });
 
     const { fetchRSS } = await import('../src/fetchers/rss');
-    const items = await fetchRSS(['https://example.com/feed'], 'chan-1');
+  const items = await fetchRSS({ url: 'https://example.com/feed' }, 'chan-1');
     expect(items[1].content).toContain('Snippet two');
     expect(items[1].content).toContain('## Full Content');
   });
@@ -77,7 +77,7 @@ describe('fetchRSS', () => {
     mockFetch.mockRejectedValue(new Error('network error'));
 
     const { fetchRSS } = await import('../src/fetchers/rss');
-    const items = await fetchRSS(['https://example.com/feed'], 'chan-1');
+  const items = await fetchRSS({ url: 'https://example.com/feed' }, 'chan-1');
     expect(items[0].content).toContain('## Snippet');
     expect(items[0].content).toContain('## Full Content');
     expect(items[1].content).toContain('## Snippet');
@@ -113,7 +113,7 @@ describe('fetchWebPage', () => {
     });
 
     const { fetchWebPage } = await import('../src/fetchers/webpage');
-    const items = await fetchWebPage(['https://example.com'], 'chan-2');
+  const items = await fetchWebPage({ url: 'https://example.com' }, 'chan-2');
     expect(items).toHaveLength(1);
     expect(items[0].title).toBe('Hello World');
     expect(items[0].url).toBe('https://example.com');
@@ -130,7 +130,7 @@ describe('fetchWebPage', () => {
     });
 
     const { fetchWebPage } = await import('../src/fetchers/webpage');
-    const items = await fetchWebPage(['https://example.com/notitle'], 'chan-2');
+  const items = await fetchWebPage({ url: 'https://example.com/notitle' }, 'chan-2');
     expect(items[0].title).toBe('https://example.com/notitle');
   });
 
@@ -143,7 +143,7 @@ describe('fetchWebPage', () => {
     });
 
     const { fetchWebPage } = await import('../src/fetchers/webpage');
-    await expect(fetchWebPage(['https://example.com/missing'], 'chan-2')).rejects.toThrow('404');
+  await expect(fetchWebPage({ url: 'https://example.com/missing' }, 'chan-2')).rejects.toThrow('404');
   });
 });
 
@@ -263,8 +263,8 @@ describe('fetchCustom', () => {
     }
 
     const { fetchCustom } = await import('../src/fetchers/custom');
-    const items = await fetchCustom(executablePath, 'chan-3', ['https://example.com/feed']);
+    const items = await fetchCustom(executablePath, 'chan-3', { url: 'https://example.com/feed' });
     expect(items).toHaveLength(1);
-    expect(items[0].content).toContain('https://example.com/feed');
+    expect(items[0].content).toContain('url=https://example.com/feed');
   });
 });

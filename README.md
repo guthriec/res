@@ -7,10 +7,7 @@ res is a CLI tool and Typescript library to collect web content into a local "re
 
 ## Documentation
 
-- [Documentation index](docs/README.md)
-- [CLI docs](docs/cli/README.md)
 - [CLI command reference](docs/cli/commands.md)
-- [CLI examples](docs/cli/examples.md)
 
 ## Key Concepts
 
@@ -42,7 +39,7 @@ Users may keep track of whether a particular content item has been processed by 
 
 The `res retain` and `res release` commands are used to create or release locks, respectively. Locks may be applied automatically to new content from a particular channel via `res retain channel`, and may be added/removed in bulk to contiguous sequences of content IDs via `res retain range`.
 
-The `res retained` command lists retained content matching the given query.
+The `res list` command lists content matching the given query, with retained-content filtering enabled by default.
 
 ### Custom Fetchers
 

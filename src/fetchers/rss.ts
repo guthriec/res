@@ -1,13 +1,14 @@
 import Parser from 'rss-parser';
 import { FetchedContent } from '../types';
 import { fetchWebPageMarkdown } from './webpage';
+import { getFetchArgValue } from '../fetch-args';
 
 const parser = new Parser();
 
-export async function fetchRSS(fetchArgs: string[], _channelId: string): Promise<FetchedContent[]> {
-  const url = fetchArgs[0];
+export async function fetchRSS(fetchArgs: Record<string, string> | undefined, _channelId: string): Promise<FetchedContent[]> {
+  const url = getFetchArgValue(fetchArgs, 'url');
   if (!url) {
-    throw new Error('RSS fetcher requires a URL as the first fetch argument');
+    throw new Error('RSS fetcher requires --fetch-arg url=<feed-url>');
   }
   const feed = await parser.parseURL(url);
 
