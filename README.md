@@ -5,6 +5,13 @@
 
 res is a CLI tool and Typescript library to collect web content into a local "reservoir" (organized directory) of markdown files for use as a document corpus in personal RAG, news summarization pipelines, or application support.
 
+## Documentation
+
+- [Documentation index](docs/README.md)
+- [CLI docs](docs/cli/README.md)
+- [CLI command reference](docs/cli/commands.md)
+- [CLI examples](docs/cli/examples.md)
+
 ## Key Concepts
 
 ### Channels
