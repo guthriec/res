@@ -26,7 +26,9 @@ export async function fetchRSS(fetchArgs: Record<string, string> | undefined, _c
     if (!link) return '';
     try {
       return await fetchWebPageMarkdown(link);
-    } catch {
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.error(`Failed to fetch markdown content for ${link}: ${reason}`);
       return '';
     }
   };

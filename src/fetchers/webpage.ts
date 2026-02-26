@@ -45,6 +45,11 @@ export async function fetchWebPageMarkdown(url: string): Promise<string> {
   if (!response.ok) {
     throw new Error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
   }
+  const contentType = response.headers.get('content-type');
+  const isHtml = contentType?.toLowerCase().includes('text/html') || contentType?.toLowerCase().includes('application/xhtml+xml');
+  if (!isHtml) {
+    throw new Error(`Unsupported content type for ${url}: ${contentType ?? 'unknown'}`);
+  }
   const html = await response.text();
   return convertWebPageHtmlToMarkdown(html);
 }
@@ -57,6 +62,11 @@ export async function fetchWebPage(fetchArgs: Record<string, string> | undefined
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
+  }
+  const contentType = response.headers.get('content-type');
+  const isHtml = contentType?.toLowerCase().includes('text/html') || contentType?.toLowerCase().includes('application/xhtml+xml');
+  if (!isHtml) {
+    throw new Error(`Unsupported content type for ${url}: ${contentType ?? 'unknown'}`);
   }
   const html = await response.text();
   const markdown = convertWebPageHtmlToMarkdown(html, url);

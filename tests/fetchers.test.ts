@@ -41,6 +41,7 @@ describe('fetchRSS', () => {
       ok: true,
       status: 200,
       statusText: 'OK',
+      headers: { get: () => 'text/html; charset=utf-8' },
       text: async () => '<html><body><h1>Fetched body</h1></body></html>',
     });
 
@@ -64,6 +65,7 @@ describe('fetchRSS', () => {
       ok: true,
       status: 200,
       statusText: 'OK',
+      headers: { get: () => 'text/html; charset=utf-8' },
       text: async () => '<html><body><p>Fetched body</p></body></html>',
     });
 
@@ -82,6 +84,28 @@ describe('fetchRSS', () => {
     expect(items[0].content).toContain('## Full Content');
     expect(items[1].content).toContain('## Snippet');
     expect(items[1].content).toContain('## Full Content');
+  });
+
+  it('logs an error and leaves fetched markdown empty for unsupported content types', async () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      headers: { get: () => 'application/pdf' },
+      text: async () => 'pdf bytes',
+    });
+
+    const { fetchRSS } = await import('../src/fetchers/rss');
+    const items = await fetchRSS({ url: 'https://example.com/feed' }, 'chan-1');
+
+    expect(items[1].content).toContain('## Full Content');
+    expect(items[1].content).not.toContain('pdf bytes');
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Unsupported content type for https://example.com/2: application/pdf'),
+    );
+
+    consoleErrorSpy.mockRestore();
   });
 });
 
@@ -103,6 +127,7 @@ describe('fetchWebPage', () => {
       ok: true,
       status: 200,
       statusText: 'OK',
+      headers: { get: () => 'text/html; charset=utf-8' },
       text: async () => [
         '<html><head><title>Hello World</title></head><body>',
         '<nav>Navigation noise</nav>',
@@ -126,6 +151,7 @@ describe('fetchWebPage', () => {
       ok: true,
       status: 200,
       statusText: 'OK',
+      headers: { get: () => 'text/html; charset=utf-8' },
       text: async () => '<html><body><p>No title here</p></body></html>',
     });
 
@@ -144,6 +170,21 @@ describe('fetchWebPage', () => {
 
     const { fetchWebPage } = await import('../src/fetchers/webpage');
   await expect(fetchWebPage({ url: 'https://example.com/missing' }, 'chan-2')).rejects.toThrow('404');
+  });
+
+  it('throws on unsupported content type', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      headers: { get: () => 'application/pdf' },
+      text: async () => 'pdf bytes',
+    });
+
+    const { fetchWebPage } = await import('../src/fetchers/webpage');
+    await expect(fetchWebPage({ url: 'https://example.com/file.pdf' }, 'chan-2')).rejects.toThrow(
+      'Unsupported content type for https://example.com/file.pdf: application/pdf',
+    );
   });
 });
 
