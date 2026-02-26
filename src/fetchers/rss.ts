@@ -1,7 +1,7 @@
 import Parser from 'rss-parser';
 import { FetchedContent } from '../types';
 import { fetchWebPageMarkdown } from './webpage';
-import { getFetchArgValue } from '../fetch-args';
+import { getFetchParamValue } from '../fetch-params';
 import { Fetcher } from './types';
 
 const parser = new Parser();
@@ -15,10 +15,10 @@ function slugifyFileStem(input: string): string {
   return slug || 'content';
 }
 
-export async function fetchRSS(fetchArgs: Record<string, string> | undefined, _channelId: string): Promise<FetchedContent[]> {
-  const url = getFetchArgValue(fetchArgs, 'url');
+export async function fetchRSS(fetchParams: Record<string, string> | undefined, _channelId: string): Promise<FetchedContent[]> {
+  const url = getFetchParamValue(fetchParams, 'url');
   if (!url) {
-    throw new Error('RSS fetcher requires --fetch-arg url=<feed-url>');
+    throw new Error('RSS fetcher requires --fetch-param \"{\\\"url\\\":\\\"<feed-url>\\\"}\"');
   }
   const feed = await parser.parseURL(url);
 

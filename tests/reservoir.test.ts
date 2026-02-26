@@ -466,10 +466,10 @@ describe('fetchChannel', () => {
 describe('editChannel', () => {
   it('updates channel fields', () => {
     const res = makeReservoir();
-    const ch = res.addChannel({ name: 'Old', fetchMethod: FetchMethod.RSS, fetchArgs: { url: 'u' } });
-    const updated = res.editChannel(ch.id, { name: 'New', fetchArgs: { url: 'https://new.com' } });
+    const ch = res.addChannel({ name: 'Old', fetchMethod: FetchMethod.RSS, fetchParams: { url: 'u' } });
+    const updated = res.editChannel(ch.id, { name: 'New', fetchParams: { url: 'https://new.com' } });
     expect(updated.name).toBe('New');
-    expect(updated.fetchArgs.url).toBe('https://new.com');
+    expect(updated.fetchParams.url).toBe('https://new.com');
     // Original fields preserved
     expect(updated.id).toBe(ch.id);
   });

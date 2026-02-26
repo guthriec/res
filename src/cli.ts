@@ -29,10 +29,6 @@ function loadReservoir(dir?: string): Reservoir {
   return Reservoir.loadNearest(process.cwd());
 }
 
-function collectOptionValue(value: string, previous: string[] = []): string[] {
-  return [...previous, value];
-}
-
 function parseOptionalBoolean(value: string | undefined, defaultValue: boolean): boolean {
   if (value === undefined) return defaultValue;
   const normalized = value.trim().toLowerCase();
@@ -91,7 +87,7 @@ channelCmd
   .command('add <name>')
   .description('Add a new channel')
   .requiredOption('--type <type>', 'type: rss | web_page | <registered-fetcher-name>')
-  .option('--fetch-arg <key=value>', 'fetcher argument (repeatable key=value)', collectOptionValue)
+  .option('--fetch-param <json>', 'fetcher params JSON merge patch object')
   .option('--rate-limit <seconds>', 'rate-limit interval in seconds')
   .option('--refresh-interval <seconds>', 'background refresh interval in seconds')
   .option('--id-field <field>', 'optional field name in fetched item content frontmatter used for deduplication')
@@ -107,7 +103,7 @@ channelCmd
   .description('Edit an existing channel')
   .option('--name <name>', 'new channel name')
   .option('--type <type>', 'new type: rss | web_page | <registered-fetcher-name>')
-  .option('--fetch-arg <key=value>', 'fetcher argument edits by key (repeatable key=value)', collectOptionValue)
+  .option('--fetch-param <json>', 'fetcher params JSON merge patch object')
   .option('--rate-limit <seconds>', 'new rate-limit interval in seconds')
   .option('--refresh-interval <seconds>', 'new background refresh interval in seconds')
   .option('--id-field <field>', 'new field name in fetched item content frontmatter used for deduplication')
@@ -115,7 +111,7 @@ channelCmd
   .action((id: string, opts: ChannelEditCliOptions) => {
     const reservoir = loadReservoir(getGlobalDir());
     const existing = reservoir.viewChannel(id);
-    const updates = buildChannelEditUpdates(existing.fetchArgs, opts);
+    const updates = buildChannelEditUpdates(existing.fetchParams, opts);
     const channel = reservoir.editChannel(id, updates);
     console.log(JSON.stringify(channel, null, 2));
   });

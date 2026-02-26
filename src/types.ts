@@ -17,8 +17,8 @@ export interface ChannelConfig {
   name: string;
   /** Built-in fetch method or registered custom fetcher executable name */
   fetchMethod: FetchMethod | string;
-  /** Fetcher arguments forwarded to the configured fetch method */
-  fetchArgs?: Record<string, string>;
+  /** Fetcher parameters forwarded to the configured fetch method */
+  fetchParams?: Record<string, string>;
   /** Rate-limit interval in seconds */
   rateLimitInterval?: number;
   /** Background refresh interval in seconds (defaults to 24h if omitted) */

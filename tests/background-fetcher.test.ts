@@ -29,7 +29,7 @@ function mkChannel(overrides: Partial<Channel> = {}): Channel {
     createdAt: overrides.createdAt ?? new Date().toISOString(),
     name: overrides.name ?? 'Channel',
     fetchMethod: overrides.fetchMethod ?? FetchMethod.RSS,
-    fetchArgs: overrides.fetchArgs ?? { url: 'https://example.com/feed' },
+    fetchParams: overrides.fetchParams ?? { url: 'https://example.com/feed' },
     rateLimitInterval: overrides.rateLimitInterval,
     refreshInterval: overrides.refreshInterval ?? DEFAULT_REFRESH_INTERVAL_SECONDS,
     retainedLocks: overrides.retainedLocks ?? [],

@@ -45,7 +45,7 @@ Manage channels.
 
 ```bash
 res channel add <name> --type <type> \
-  [--fetch-arg <key=value> ...] \
+  [--fetch-param <json>] \
   [--rate-limit <seconds>] \
   [--refresh-interval <seconds>] \
   [--id-field <field>] \
@@ -57,10 +57,10 @@ Options:
 - `--type <type>`: required; one of:
   - built-in: `rss`, `web_page`
   - custom: registered fetcher name
-- `--fetch-arg <key=value>`: repeatable fetcher argument (always key/value)
+- `--fetch-param <json>`: JSON object patch for fetcher parameters
 - For built-in fetchers:
-  - `rss`: include `--fetch-arg url=<feed-url>`
-  - `web_page`: include `--fetch-arg url=<page-url>`
+  - `rss`: include `--fetch-param '{"url":"<feed-url>"}'`
+  - `web_page`: include `--fetch-param '{"url":"<page-url>"}'`
 - `--rate-limit <seconds>`: rate-limit interval
 - `--refresh-interval <seconds>`: background refresh interval (default is 24h)
 - `--id-field <field>`: optional fetched-item frontmatter field name used as the per-channel unique content identifier
@@ -75,7 +75,7 @@ Options:
 res channel edit <id> \
   [--name <name>] \
   [--type <type>] \
-  [--fetch-arg <key=value> ...] \
+  [--fetch-param <json>] \
   [--rate-limit <seconds>] \
   [--refresh-interval <seconds>] \
   [--id-field <field>] \
@@ -89,11 +89,11 @@ Deduplication fields:
 - `--id-field` sets or updates the fetched-item frontmatter field used as the unique identifier
 - `--duplicate-strategy` sets duplicate handling to `overwrite` or `keep both`
 
-`--fetch-arg` edits are key-scoped:
+`--fetch-param` edits use JSON Merge Patch-like semantics:
 
 - Only provided keys are updated
 - Omitted keys are left unchanged
-- A blank value removes that key (for example `--fetch-arg timeout=`)
+- A key set to `null` removes that key (for example `--fetch-param '{"timeout":null}'`)
 
 ### `channel delete`
 
@@ -225,9 +225,9 @@ res content list \
 
 Options:
 
-- `--channels <ids>`: comma-separated channel IDs to filter
-- `--retained <true|false>`: include retained or unretained content (default: `true`)
-- `--retained-by <names>`: only include content retained by one or more lock names (comma-separated; requires `--retained true`)
+- `--channels <ids>`: comma-separated channel IDs to filter by
+- `--retained <true|false>`: whether to restrict to only content retained by some lock (default: `true`)
+- `--retained-by <names>`: only include content retained by the provided lock names (comma-separated; requires `--retained true`)
   - if provided but empty, defaults to `[global]`
 - `--page-size <count>`: max number of matching items to return
 - `--page-offset <count>`: number of matching items to skip before returning results

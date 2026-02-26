@@ -4,7 +4,7 @@ import * as path from 'path';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { FetchedContent } from '../types';
-import { fetchArgObjectToCliArgs } from '../fetch-args';
+import { fetchParamObjectToCliArgs } from '../fetch-params';
 import { Fetcher } from './types';
 
 const execFileAsync = promisify(execFile);
@@ -54,7 +54,7 @@ function collectSupplementaryFiles(resourcesRoot: string): Array<{ relativePath:
 export async function fetchCustom(
   executablePath: string,
   channelId: string,
-  fetchArgs: Record<string, string> | undefined,
+  fetchParams: Record<string, string> | undefined,
 ): Promise<FetchedContent[]> {
   const executableAbsolutePath = path.resolve(executablePath);
   if (!fs.existsSync(executableAbsolutePath)) {
@@ -66,7 +66,7 @@ export async function fetchCustom(
   fs.mkdirSync(outsDir, { recursive: true });
 
   try {
-    await execFileAsync(executableAbsolutePath, fetchArgObjectToCliArgs(fetchArgs), {
+    await execFileAsync(executableAbsolutePath, fetchParamObjectToCliArgs(fetchParams), {
       cwd: tempDir,
       env: {
         ...process.env,
@@ -94,8 +94,8 @@ export async function fetchCustom(
 
 export function createCustomFetcher(executablePath: string): Fetcher {
   return {
-    fetch(fetchArgs, channelId) {
-      return fetchCustom(executablePath, channelId, fetchArgs);
+    fetch(fetchParams, channelId) {
+      return fetchCustom(executablePath, channelId, fetchParams);
     },
   };
 }

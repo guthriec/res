@@ -16,11 +16,9 @@ This example script fetches current weather from Open-Meteo and writes one markd
 - `--lon` or `--longitude` (default: `-122.4194`)
 - `--location` (default: `San Francisco, CA`)
 
-When passing args through `res channel add`, use `key=value` strings:
+When passing params through `res channel add`, use a single JSON object:
 
-- `--fetch-arg lat=40.7128`
-- `--fetch-arg lon=-74.0060`
-- `--fetch-arg location="New York, NY"`
+- `--fetch-param '{"lat":40.7128,"lon":-74.0060,"location":"New York, NY"}'`
 
 ### End-to-end weather example
 
@@ -40,9 +38,7 @@ res add-fetcher ./examples/weather-fetcher.mjs
 # Create a channel that uses the fetcher name returned above (usually weather-fetcher.mjs)
 res channel add weather-nyc \
   --type weather-fetcher.mjs \
-  --fetch-arg lat=40.7128 \
-  --fetch-arg lon=-74.0060 \
-  --fetch-arg location="New York, NY" \
+  --fetch-param '{"lat":40.7128,"lon":-74.0060,"location":"New York, NY"}' \
   --refresh-interval 60
 ```
 

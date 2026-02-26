@@ -1,9 +1,9 @@
-import { mergeFetchArgObject, normalizeFetchArgObject } from './fetch-args';
+import { mergeFetchParamObject, normalizeFetchParamObject } from './fetch-params';
 import { ChannelConfig, DuplicateStrategy, FetchMethod } from './types';
 
 export interface ChannelAddCliOptions {
   type: string;
-  fetchArg?: string[];
+  fetchParam?: string;
   rateLimit?: string;
   refreshInterval?: string;
   idField?: string;
@@ -13,7 +13,7 @@ export interface ChannelAddCliOptions {
 export interface ChannelEditCliOptions {
   name?: string;
   type?: string;
-  fetchArg?: string[];
+  fetchParam?: string;
   rateLimit?: string;
   refreshInterval?: string;
   idField?: string;
@@ -30,7 +30,7 @@ export function buildChannelAddConfig(name: string, opts: ChannelAddCliOptions):
   return {
     name,
     fetchMethod: opts.type as FetchMethod,
-    fetchArgs: normalizeFetchArgObject(opts.fetchArg),
+    fetchParams: normalizeFetchParamObject(opts.fetchParam),
     rateLimitInterval: opts.rateLimit !== undefined ? parseInt(opts.rateLimit, 10) : undefined,
     refreshInterval: opts.refreshInterval !== undefined ? parseInt(opts.refreshInterval, 10) : undefined,
     idField: opts.idField,
@@ -39,14 +39,14 @@ export function buildChannelAddConfig(name: string, opts: ChannelAddCliOptions):
 }
 
 export function buildChannelEditUpdates(
-  existingFetchArgs: Record<string, string> | undefined,
+  existingFetchParams: Record<string, string> | undefined,
   opts: ChannelEditCliOptions,
 ): Partial<ChannelConfig> {
   const updates: Partial<ChannelConfig> = {};
   if (opts.name) updates.name = opts.name;
   if (opts.type) updates.fetchMethod = opts.type as FetchMethod;
-  if (opts.fetchArg) {
-    updates.fetchArgs = mergeFetchArgObject(existingFetchArgs, opts.fetchArg);
+  if (opts.fetchParam !== undefined) {
+    updates.fetchParams = mergeFetchParamObject(existingFetchParams, opts.fetchParam);
   }
   if (opts.rateLimit !== undefined) updates.rateLimitInterval = parseInt(opts.rateLimit, 10);
   if (opts.refreshInterval !== undefined) updates.refreshInterval = parseInt(opts.refreshInterval, 10);

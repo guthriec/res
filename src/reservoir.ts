@@ -58,10 +58,10 @@ interface ExistingContentEntry {
   contentId?: string;
 }
 
-function normalizeFetchArgs(fetchArgs?: Record<string, string>): Record<string, string> {
-  if (!fetchArgs || typeof fetchArgs !== 'object' || Array.isArray(fetchArgs)) return {};
+function normalizeFetchParams(fetchParams?: Record<string, string>): Record<string, string> {
+  if (!fetchParams || typeof fetchParams !== 'object' || Array.isArray(fetchParams)) return {};
   const normalized: Record<string, string> = {};
-  for (const [rawKey, rawValue] of Object.entries(fetchArgs)) {
+  for (const [rawKey, rawValue] of Object.entries(fetchParams)) {
     if (typeof rawValue !== 'string') continue;
     const key = rawKey.trim();
     if (!key) continue;
@@ -130,7 +130,7 @@ function normalizeDuplicateStrategy(value?: DuplicateStrategy | string): Duplica
 }
 
 function normalizeChannel(rawChannel: Channel | (Omit<Channel, 'refreshInterval'> & { refreshInterval?: number })): Channel {
-  const raw = rawChannel as Channel & { retentionStrategy?: unknown };
+  const raw = rawChannel as Channel & { retentionStrategy?: unknown; fetchArgs?: Record<string, string> };
   const rawRefresh = raw.refreshInterval;
   const refreshInterval =
     typeof rawRefresh === 'number' && Number.isFinite(rawRefresh) && rawRefresh > 0
@@ -141,7 +141,7 @@ function normalizeChannel(rawChannel: Channel | (Omit<Channel, 'refreshInterval'
     createdAt: raw.createdAt,
     name: raw.name,
     fetchMethod: raw.fetchMethod,
-    fetchArgs: normalizeFetchArgs(raw.fetchArgs),
+    fetchParams: normalizeFetchParams(raw.fetchParams ?? raw.fetchArgs),
     rateLimitInterval: typeof raw.rateLimitInterval === 'number' ? raw.rateLimitInterval : undefined,
     refreshInterval,
     idField: normalizeIdField(raw.idField),
@@ -312,7 +312,7 @@ export class Reservoir {
       createdAt: new Date().toISOString(),
       name: config.name,
       fetchMethod: config.fetchMethod,
-      fetchArgs: normalizeFetchArgs(config.fetchArgs),
+      fetchParams: normalizeFetchParams(config.fetchParams),
       rateLimitInterval: config.rateLimitInterval,
       refreshInterval: config.refreshInterval ?? DEFAULT_REFRESH_INTERVAL_SECONDS,
       idField: normalizeIdField(config.idField),
@@ -352,9 +352,9 @@ export class Reservoir {
 
   viewChannel(channelId: string): Channel {
     const configPath = path.join(this.resolveChannelDir(channelId), CHANNEL_CONFIG_FILE);
-    const rawChannel = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Channel;
+    const rawChannel = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Channel & { fetchArgs?: Record<string, string> };
     const channel = normalizeChannel(rawChannel);
-    if (rawChannel.refreshInterval !== channel.refreshInterval) {
+    if (rawChannel.refreshInterval !== channel.refreshInterval || rawChannel.fetchArgs !== undefined) {
       fs.writeFileSync(configPath, JSON.stringify(channel, null, 2));
     }
     return channel;
@@ -370,9 +370,9 @@ export class Reservoir {
         try {
           const configPath = path.join(channelsDir, e.name, CHANNEL_CONFIG_FILE);
           if (!fs.existsSync(configPath)) return [];
-          const rawChannel = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Channel;
+          const rawChannel = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Channel & { fetchArgs?: Record<string, string> };
           const channel = normalizeChannel(rawChannel);
-          if (rawChannel.refreshInterval !== channel.refreshInterval) {
+          if (rawChannel.refreshInterval !== channel.refreshInterval || rawChannel.fetchArgs !== undefined) {
             fs.writeFileSync(configPath, JSON.stringify(channel, null, 2));
           }
           return [channel];
@@ -387,9 +387,9 @@ export class Reservoir {
   async fetchChannel(channelId: string): Promise<ContentItem[]> {
     await this.syncContentTracking();
     const channel = this.viewChannel(channelId);
-    const fetchArgs = channel.fetchArgs;
+    const fetchParams = channel.fetchParams;
     const fetcher = this.resolveFetcher(channel.fetchMethod);
-    const fetched: FetchedContent[] = await fetcher.fetch(fetchArgs, channelId);
+    const fetched: FetchedContent[] = await fetcher.fetch(fetchParams, channelId);
 
     // Persist fetched items
     const metadata = this.loadMetadata(channelId);
