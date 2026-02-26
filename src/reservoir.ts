@@ -129,51 +129,6 @@ function normalizeDuplicateStrategy(value?: DuplicateStrategy | string): Duplica
   throw new Error(`Invalid duplicate strategy '${value}'. Expected 'overwrite' or 'keep both'.`);
 }
 
-function parseLegacyFrontmatter(rawContent: string): {
-  meta: { id: string; channelId: string; title: string; fetchedAt: string; url?: string } | null;
-  content: string;
-} {
-  if (!rawContent.startsWith('---\n')) {
-    return { meta: null, content: rawContent };
-  }
-
-  const endIdx = rawContent.indexOf('\n---\n', 4);
-  if (endIdx === -1) {
-    return { meta: null, content: rawContent };
-  }
-
-  const header = rawContent.slice(4, endIdx).split('\n');
-  const body = rawContent.slice(endIdx + '\n---\n'.length);
-  const kv: Record<string, string> = {};
-
-  for (const line of header) {
-    const sep = line.indexOf(':');
-    if (sep === -1) continue;
-    const key = line.slice(0, sep).trim();
-    const value = line.slice(sep + 1).trim();
-    kv[key] = value;
-  }
-
-  const id = kv.id;
-  const channelId = kv.channelId;
-  const title = kv.title;
-  const fetchedAt = kv.fetchedAt;
-  if (!id || !channelId || !title || !fetchedAt) {
-    return { meta: null, content: rawContent };
-  }
-
-  return {
-    meta: {
-      id: parseMaybeJsonString(id),
-      channelId: parseMaybeJsonString(channelId),
-      title: parseMaybeJsonString(title),
-      fetchedAt: parseMaybeJsonString(fetchedAt),
-      url: kv.url !== undefined ? parseMaybeJsonString(kv.url) : undefined,
-    },
-    content: body,
-  };
-}
-
 function normalizeChannel(rawChannel: Channel | (Omit<Channel, 'refreshInterval'> & { refreshInterval?: number })): Channel {
   const raw = rawChannel as Channel & { retentionStrategy?: unknown };
   const rawRefresh = raw.refreshInterval;
@@ -782,18 +737,6 @@ export class Reservoir {
     }
 
     if (needsWrite) {
-      const legacyItems = items.filter(
-        (item): item is ContentMetadata =>
-          !!item &&
-          typeof item === 'object' &&
-          'id' in item &&
-          'channelId' in item &&
-          'title' in item &&
-          'fetchedAt' in item,
-      );
-      if (legacyItems.length > 0) {
-        this.migrateLegacyContent(channelId, legacyItems);
-      }
       const migrated = { items: lockStateItems };
       this.saveMetadata(channelId, migrated);
       return migrated;
@@ -1038,16 +981,6 @@ export class Reservoir {
         continue;
       }
 
-      const legacy = parseLegacyFrontmatter(raw);
-      if (legacy.meta?.id) {
-        parsedById.set(legacy.meta.id, {
-          id: legacy.meta.id,
-          content: legacy.content,
-          filePath,
-        });
-        continue;
-      }
-
       for (const state of metadataById.values()) {
         if (state.filePath !== relativePath) continue;
         parsedById.set(state.id, {
@@ -1178,26 +1111,6 @@ export class Reservoir {
         }
       } else if (isSyncDebugEnabled()) {
         console.error(`[res sync] [${channel.id}] no metadata changes`);
-      }
-    }
-  }
-
-  private migrateLegacyContent(channelId: string, legacyItems: ContentMetadata[]): void {
-    const channelDir = this.resolveChannelDir(channelId);
-    const contentDir = path.join(channelDir, CONTENT_DIR);
-    fs.mkdirSync(contentDir, { recursive: true });
-
-    for (const item of legacyItems) {
-      const legacyPath = path.join(contentDir, `${item.id}.md`);
-      if (!fs.existsSync(legacyPath)) continue;
-
-      const raw = fs.readFileSync(legacyPath, 'utf-8');
-      const parsed = parseLegacyFrontmatter(raw);
-      const body = parsed.meta ? parsed.content : raw;
-      const targetPath = this.createUniqueContentPath(contentDir, contentFileSlug(item.title));
-      fs.writeFileSync(targetPath, body);
-      if (targetPath !== legacyPath) {
-        fs.unlinkSync(legacyPath);
       }
     }
   }

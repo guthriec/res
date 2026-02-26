@@ -11,6 +11,7 @@ interface TestContentMetadata {
   fetchedAt: string;
   locks: string[];
   url?: string;
+  filePath?: string;
 }
 
 let tmpDir: string;
@@ -89,9 +90,18 @@ function addTestItem(
   // Update metadata
   const metaPath = path.join(channelDirForId(channelId), 'metadata.json');
   const meta = fs.existsSync(metaPath)
-    ? (JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as { items: Array<{ id: string; locks: string[] }> })
+    ? (JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as {
+      items: Array<{ id: string; locks: string[]; fetchedAt?: string; url?: string; filePath?: string }>;
+    })
     : { items: [] };
-  meta.items.push({ id: item.id, locks: item.locks });
+  const relativePath = path.relative(tmpDir, contentPath).replace(/\\/g, '/');
+  meta.items.push({
+    id: item.id,
+    locks: item.locks,
+    fetchedAt: item.fetchedAt,
+    url: item.url,
+    filePath: relativePath,
+  });
   fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
   return item;
 }
