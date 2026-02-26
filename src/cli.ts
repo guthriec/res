@@ -38,6 +38,15 @@ program
     console.log(`Initialized reservoir at ${path.resolve(opts.dir)}`);
   });
 
+program
+  .command('add-fetcher <executable>')
+  .description('Register a custom fetcher executable in the user config directory')
+  .option('--dir <path>', 'reservoir directory', process.cwd())
+  .action((executable: string, opts: { dir: string }) => {
+    const registered = loadReservoir(opts.dir).addFetcher(executable);
+    console.log(JSON.stringify(registered, null, 2));
+  });
+
 // ─── channel ─────────────────────────────────────────────────────────────────
 
 const channelCmd = program.command('channel').description('Manage channels');
@@ -45,15 +54,14 @@ const channelCmd = program.command('channel').description('Manage channels');
 channelCmd
   .command('add <name>')
   .description('Add a new channel')
-  .requiredOption('--type <type>', 'type: rss | web_page | custom')
+  .requiredOption('--type <type>', 'type: rss | web_page | <registered-fetcher-name>')
   .option('--url <url>', 'URL (for rss or web_page types)')
-  .option('--script <filename>', 'script filename in scripts/ dir (for custom type)')
   .option('--rate-limit <ms>', 'rate-limit interval in milliseconds')
   .option('--refresh-interval <ms>', 'background refresh interval in milliseconds')
   .option('--retain-locks <names>', 'comma-separated lock names to apply to newly fetched content')
   .option('--dir <path>', 'reservoir directory', process.cwd())
   .action((name: string, opts: {
-    type: string; url?: string; script?: string;
+    type: string; url?: string;
     rateLimit?: string; refreshInterval?: string; retainLocks?: string; dir: string;
   }) => {
     const reservoir = loadReservoir(opts.dir);
@@ -61,7 +69,6 @@ channelCmd
       name,
       fetchMethod: opts.type as FetchMethod,
       url: opts.url,
-      script: opts.script,
       rateLimitInterval: opts.rateLimit !== undefined ? parseInt(opts.rateLimit, 10) : undefined,
       refreshInterval: opts.refreshInterval !== undefined ? parseInt(opts.refreshInterval, 10) : undefined,
       retainedLocks: parseLockList(opts.retainLocks),
@@ -73,15 +80,14 @@ channelCmd
   .command('edit <id>')
   .description('Edit an existing channel')
   .option('--name <name>', 'new channel name')
-  .option('--type <type>', 'new type: rss | web_page | custom')
+  .option('--type <type>', 'new type: rss | web_page | <registered-fetcher-name>')
   .option('--url <url>', 'new URL')
-  .option('--script <filename>', 'new script filename')
   .option('--rate-limit <ms>', 'new rate-limit interval in milliseconds')
   .option('--refresh-interval <ms>', 'new background refresh interval in milliseconds')
   .option('--retain-locks <names>', 'new comma-separated lock names for newly fetched content')
   .option('--dir <path>', 'reservoir directory', process.cwd())
   .action((id: string, opts: {
-    name?: string; type?: string; url?: string; script?: string;
+    name?: string; type?: string; url?: string;
     rateLimit?: string; refreshInterval?: string; retainLocks?: string; dir: string;
   }) => {
     const reservoir = loadReservoir(opts.dir);
@@ -89,7 +95,6 @@ channelCmd
     if (opts.name) updates.name = opts.name;
     if (opts.type) updates.fetchMethod = opts.type as FetchMethod;
     if (opts.url) updates.url = opts.url;
-    if (opts.script) updates.script = opts.script;
     if (opts.rateLimit !== undefined) updates.rateLimitInterval = parseInt(opts.rateLimit, 10);
     if (opts.refreshInterval !== undefined) updates.refreshInterval = parseInt(opts.refreshInterval, 10);
     if (opts.retainLocks !== undefined) updates.retainedLocks = parseLockList(opts.retainLocks);

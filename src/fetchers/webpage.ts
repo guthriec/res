@@ -1,9 +1,17 @@
 import TurndownService from 'turndown';
-import { JSDOM } from 'jsdom';
+import { JSDOM, VirtualConsole } from 'jsdom';
 import { Readability } from '@mozilla/readability';
 import { FetchedContent } from '../types';
 
 const td = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced' });
+const virtualConsole = new VirtualConsole();
+
+virtualConsole.on('jsdomError', (err) => {
+  if (err?.message?.includes('Could not parse CSS stylesheet')) {
+    return;
+  }
+  console.error(err);
+});
 
 export function convertWebPageHtmlToMarkdown(html: string, sourceUrl?: string): string {
   return td.turndown(extractMainContentHtml(html, sourceUrl) ?? html);
@@ -11,7 +19,7 @@ export function convertWebPageHtmlToMarkdown(html: string, sourceUrl?: string): 
 
 export function extractMainContentHtml(html: string, sourceUrl?: string): string | null {
   try {
-    const dom = new JSDOM(html, sourceUrl ? { url: sourceUrl } : undefined);
+    const dom = new JSDOM(html, sourceUrl ? { url: sourceUrl, virtualConsole } : { virtualConsole });
     const reader = new Readability(dom.window.document);
     const article = reader.parse();
     const content = article?.content?.trim();

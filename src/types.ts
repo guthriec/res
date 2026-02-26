@@ -1,7 +1,6 @@
 export enum FetchMethod {
   RSS = 'rss',
   WebPage = 'web_page',
-  Custom = 'custom',
 }
 
 export const DEFAULT_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -13,11 +12,10 @@ export interface ReservoirConfig {
 
 export interface ChannelConfig {
   name: string;
-  fetchMethod: FetchMethod;
+  /** Built-in fetch method or registered custom fetcher executable name */
+  fetchMethod: FetchMethod | string;
   /** URL for RSS or WebPage fetch methods */
   url?: string;
-  /** Script filename (in the reservoir's scripts/ dir) for Custom fetch method */
-  script?: string;
   /** Rate-limit interval in milliseconds */
   rateLimitInterval?: number;
   /** Background refresh interval in milliseconds (defaults to 24h if omitted) */
@@ -53,4 +51,9 @@ export interface FetchedContent {
   title: string;
   url?: string;
   content: string;
+  sourceFileName?: string;
+  supplementaryFiles?: Array<{
+    relativePath: string;
+    content: Buffer;
+  }>;
 }

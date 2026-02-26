@@ -28,7 +28,6 @@ function mkChannel(overrides: Partial<Channel> = {}): Channel {
     name: overrides.name ?? 'Channel',
     fetchMethod: overrides.fetchMethod ?? FetchMethod.RSS,
     url: overrides.url ?? 'https://example.com/feed',
-    script: overrides.script,
     rateLimitInterval: overrides.rateLimitInterval,
     refreshInterval: overrides.refreshInterval ?? DEFAULT_REFRESH_INTERVAL_MS,
     retainedLocks: overrides.retainedLocks ?? [],

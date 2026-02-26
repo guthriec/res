@@ -151,11 +151,11 @@ describe('fetchWebPage', () => {
 
 describe('fetchCustom', () => {
   let tmpDir: string;
-  let scriptPath: string;
+  let executablePath: string;
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'res-custom-test-'));
-    scriptPath = path.join(tmpDir, 'myscript.js');
+    executablePath = path.join(tmpDir, process.platform === 'win32' ? 'myfetcher.cmd' : 'myfetcher.sh');
   });
 
   afterEach(() => {
@@ -163,26 +163,79 @@ describe('fetchCustom', () => {
     vi.resetModules();
   });
 
-  it('executes the script and returns content items', async () => {
-    fs.writeFileSync(
-      scriptPath,
-      `module.exports = async function(channelId) {
-        return [{ title: 'Custom Item', content: '# Custom', url: 'https://custom.com' }];
-      };`,
-    );
+  it('executes the fetcher and returns items from outs markdown files', async () => {
+    if (process.platform === 'win32') {
+      fs.writeFileSync(
+        executablePath,
+        [
+          '@echo off',
+          'mkdir outs 2>nul',
+          '(echo # Custom Item)> outs\\custom-item.md',
+        ].join('\r\n'),
+      );
+    } else {
+      fs.writeFileSync(
+        executablePath,
+        [
+          '#!/bin/sh',
+          'cat <<\'EOF\' > outs/custom-item.md',
+          '# Custom Item',
+          'EOF',
+        ].join('\n'),
+      );
+      fs.chmodSync(executablePath, 0o755);
+    }
 
     const { fetchCustom } = await import('../src/fetchers/custom');
-    const items = await fetchCustom(scriptPath, 'chan-3');
+    const items = await fetchCustom(executablePath, 'chan-3');
     expect(items).toHaveLength(1);
-    expect(items[0].title).toBe('Custom Item');
-    expect(items[0].content).toBe('# Custom');
-    expect(items[0].url).toBe('https://custom.com');
+    expect(items[0].title).toBe('custom-item');
+    expect(items[0].content).toContain('# Custom Item');
+    expect(items[0].sourceFileName).toBe('custom-item.md');
   });
 
-  it('throws when script does not export a function', async () => {
-    fs.writeFileSync(scriptPath, `module.exports = { notAFunction: true };`);
+  it('collects supplementary files from outs/<markdown-name> directories', async () => {
+    if (process.platform === 'win32') {
+      fs.writeFileSync(
+        executablePath,
+        [
+          '@echo off',
+          'mkdir outs 2>nul',
+          '(echo # Item)> outs\\item.md',
+          'mkdir outs\\item 2>nul',
+          '(echo binary)> outs\\item\\image.txt',
+        ].join('\r\n'),
+      );
+    } else {
+      fs.writeFileSync(
+        executablePath,
+        [
+          '#!/bin/sh',
+          'cat <<\'EOF\' > outs/item.md',
+          '# Item',
+          'EOF',
+          'mkdir -p outs/item',
+          'cat <<\'EOF\' > outs/item/image.txt',
+          'binary',
+          'EOF',
+        ].join('\n'),
+      );
+      fs.chmodSync(executablePath, 0o755);
+    }
 
     const { fetchCustom } = await import('../src/fetchers/custom');
-    await expect(fetchCustom(scriptPath, 'chan-3')).rejects.toThrow('must export a function');
+    const items = await fetchCustom(executablePath, 'chan-3');
+    expect(items).toHaveLength(1);
+    expect(items[0].supplementaryFiles).toBeDefined();
+    expect(items[0].supplementaryFiles).toHaveLength(1);
+    expect(items[0].supplementaryFiles![0].relativePath).toBe('image.txt');
+    expect(items[0].supplementaryFiles![0].content.toString('utf-8')).toContain('binary');
+  });
+
+  it('throws when fetcher executable does not exist', async () => {
+    const missingPath = path.join(tmpDir, 'missing-fetcher');
+
+    const { fetchCustom } = await import('../src/fetchers/custom');
+    await expect(fetchCustom(missingPath, 'chan-3')).rejects.toThrow('Custom fetcher not found');
   });
 });

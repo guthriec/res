@@ -5,13 +5,21 @@ import { Reservoir } from '../src/reservoir';
 import { FetchMethod, GLOBAL_LOCK_NAME, ContentMetadata } from '../src/types';
 
 let tmpDir: string;
+let previousXdgConfigHome: string | undefined;
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'res-test-'));
+  previousXdgConfigHome = process.env.XDG_CONFIG_HOME;
+  process.env.XDG_CONFIG_HOME = tmpDir;
 });
 
 afterEach(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
+  if (previousXdgConfigHome === undefined) {
+    delete process.env.XDG_CONFIG_HOME;
+  } else {
+    process.env.XDG_CONFIG_HOME = previousXdgConfigHome;
+  }
 });
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -110,10 +118,9 @@ describe('Reservoir.initialize', () => {
     expect(fs.existsSync(path.join(tmpDir, '.res-config.json'))).toBe(true);
   });
 
-  it('creates channels and scripts directories', () => {
+  it('creates channels directory', () => {
     Reservoir.initialize(tmpDir);
     expect(fs.existsSync(path.join(tmpDir, 'channels'))).toBe(true);
-    expect(fs.existsSync(path.join(tmpDir, 'scripts'))).toBe(true);
   });
 
   it('stores maxSizeMB in config', () => {
@@ -248,27 +255,30 @@ describe('fetchChannel', () => {
   it('assigns global serial IDs across channels', async () => {
     const res = makeReservoir();
 
-    const scriptName = 'items.js';
+    const fetcherPath = path.join(tmpDir, 'items-fetcher.sh');
     fs.writeFileSync(
-      path.join(tmpDir, 'scripts', scriptName),
-      `module.exports = async function() {
-        return [
-          { title: 'First', content: '# First', url: 'https://example.com/first' },
-          { title: 'Second', content: '# Second', url: 'https://example.com/second' }
-        ];
-      };`,
+      fetcherPath,
+      [
+        '#!/bin/sh',
+        'cat <<\'EOF\' > outs/first.md',
+        '# First',
+        'EOF',
+        'cat <<\'EOF\' > outs/second.md',
+        '# Second',
+        'EOF',
+      ].join('\n'),
       'utf-8',
     );
+    fs.chmodSync(fetcherPath, 0o755);
+    const registered = res.addFetcher(fetcherPath);
 
     const ch1 = res.addChannel({
       name: 'Custom 1',
-      fetchMethod: FetchMethod.Custom,
-      script: scriptName,
+      fetchMethod: registered.name,
     });
     const ch2 = res.addChannel({
       name: 'Custom 2',
-      fetchMethod: FetchMethod.Custom,
-      script: scriptName,
+      fetchMethod: registered.name,
     });
 
     const firstBatch = await res.fetchChannel(ch1.id);
@@ -281,19 +291,23 @@ describe('fetchChannel', () => {
   it('applies channel locks to newly fetched items', async () => {
     const res = makeReservoir();
 
-    const scriptName = 'one.js';
+    const fetcherPath = path.join(tmpDir, 'one-fetcher.sh');
     fs.writeFileSync(
-      path.join(tmpDir, 'scripts', scriptName),
-      `module.exports = async function() {
-        return [{ title: 'Locked', content: '# Locked', url: 'https://example.com/locked' }];
-      };`,
+      fetcherPath,
+      [
+        '#!/bin/sh',
+        'cat <<\'EOF\' > outs/locked.md',
+        '# Locked',
+        'EOF',
+      ].join('\n'),
       'utf-8',
     );
+    fs.chmodSync(fetcherPath, 0o755);
+    const registered = res.addFetcher(fetcherPath);
 
     const ch = res.addChannel({
       name: 'Locked Channel',
-      fetchMethod: FetchMethod.Custom,
-      script: scriptName,
+      fetchMethod: registered.name,
       retainedLocks: ['alpha', 'beta'],
     });
 

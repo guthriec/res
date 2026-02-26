@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import {
   ReservoirConfig,
@@ -17,10 +18,24 @@ import { ContentIdAllocator } from './content-id-allocator';
 
 const CONFIG_FILE = '.res-config.json';
 const CHANNELS_DIR = 'channels';
-const SCRIPTS_DIR = 'scripts';
 const CHANNEL_CONFIG_FILE = 'channel.json';
 const CHANNEL_METADATA_FILE = 'metadata.json';
 const CONTENT_DIR = 'content';
+const CUSTOM_FETCHERS_DIR = 'fetchers';
+
+function resolveUserConfigDir(): string {
+  const xdgConfigHome = process.env.XDG_CONFIG_HOME?.trim();
+  if (xdgConfigHome) {
+    return path.join(xdgConfigHome, 'res');
+  }
+  if (process.platform === 'win32') {
+    const appData = process.env.APPDATA?.trim();
+    if (appData) {
+      return path.join(appData, 'res');
+    }
+  }
+  return path.join(os.homedir(), '.config', 'res');
+}
 
 interface ContentLockState {
   id: string;
@@ -183,7 +198,6 @@ export class Reservoir {
     }
     fs.writeFileSync(path.join(absDir, CONFIG_FILE), JSON.stringify(config, null, 2));
     fs.mkdirSync(path.join(absDir, CHANNELS_DIR), { recursive: true });
-    fs.mkdirSync(path.join(absDir, SCRIPTS_DIR), { recursive: true });
     return new Reservoir(absDir, config);
   }
 
@@ -206,6 +220,37 @@ export class Reservoir {
 
   get reservoirConfig(): ReservoirConfig {
     return { ...this.config };
+  }
+
+  get customFetchersDirectory(): string {
+    return path.join(resolveUserConfigDir(), CUSTOM_FETCHERS_DIR);
+  }
+
+  addFetcher(executablePath: string): { name: string; destinationPath: string } {
+    const sourcePath = path.resolve(executablePath);
+    if (!fs.existsSync(sourcePath)) {
+      throw new Error(`Fetcher executable not found: ${sourcePath}`);
+    }
+    const sourceStat = fs.statSync(sourcePath);
+    if (!sourceStat.isFile()) {
+      throw new Error(`Fetcher path is not a file: ${sourcePath}`);
+    }
+
+    const name = path.basename(sourcePath);
+    const fetchersDir = this.customFetchersDirectory;
+    const destinationPath = path.join(fetchersDir, name);
+    if (fs.existsSync(destinationPath)) {
+      throw new Error(`Fetcher already exists: ${name}`);
+    }
+
+    fs.mkdirSync(fetchersDir, { recursive: true });
+    fs.copyFileSync(sourcePath, destinationPath);
+    fs.chmodSync(destinationPath, sourceStat.mode);
+
+    return {
+      name,
+      destinationPath,
+    };
   }
 
   // ─── Channel management ────────────────────────────────────────────────────
@@ -295,14 +340,9 @@ export class Reservoir {
         if (!channel.url) throw new Error(`Channel ${channelId} has no URL configured`);
         fetched = await fetchWebPage(channel.url, channelId);
         break;
-      case 'custom': {
-        if (!channel.script) throw new Error(`Channel ${channelId} has no script configured`);
-        const scriptPath = path.join(this.dir, SCRIPTS_DIR, channel.script);
-        fetched = await fetchCustom(scriptPath, channelId);
-        break;
-      }
       default:
-        throw new Error(`Unknown fetch method: ${(channel as Channel).fetchMethod}`);
+        fetched = await fetchCustom(path.join(this.customFetchersDirectory, channel.fetchMethod), channelId);
+        break;
     }
 
     // Persist fetched items
@@ -325,6 +365,22 @@ export class Reservoir {
       metadata.items.push({ id, locks });
       const contentPath = this.createUniqueContentPath(contentDir, item.title);
       fs.writeFileSync(contentPath, toFrontmatter(frontmatter, item.content));
+
+      if (Array.isArray(item.supplementaryFiles) && item.supplementaryFiles.length > 0) {
+        const contentFileName = item.sourceFileName ?? path.basename(contentPath);
+        const resourceDirectoryName = contentFileName.toLowerCase().endsWith('.md')
+          ? contentFileName.slice(0, -3)
+          : contentFileName;
+        if (resourceDirectoryName.length > 0) {
+          const destinationRoot = path.join(contentDir, resourceDirectoryName);
+          for (const file of item.supplementaryFiles) {
+            const destinationPath = path.join(destinationRoot, file.relativePath);
+            fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+            fs.writeFileSync(destinationPath, file.content);
+          }
+        }
+      }
+
       persisted.push({
         id,
         channelId,
