@@ -64,16 +64,7 @@ function addTestItem(
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '') || 'content';
 
-  const frontmatter = [
-    '---',
-    `id: ${JSON.stringify(item.id)}`,
-    `channelId: ${JSON.stringify(item.channelId)}`,
-    `title: ${JSON.stringify(item.title)}`,
-    `fetchedAt: ${JSON.stringify(item.fetchedAt)}`,
-    ...(item.url ? [`url: ${JSON.stringify(item.url)}`] : []),
-    '---',
-    overrides.content ?? `# ${item.title}`,
-  ].join('\n');
+  const body = overrides.content ?? `# ${item.title}`;
 
   // Write content file
   const contentDir = path.join(channelDirForId(channelId), 'content');
@@ -84,30 +75,53 @@ function addTestItem(
     contentPath = path.join(contentDir, `${slug}-${suffix}.md`);
     suffix += 1;
   }
-  fs.writeFileSync(contentPath, frontmatter);
+  fs.writeFileSync(contentPath, body);
 
   // Update metadata
   const metaPath = path.join(channelDirForId(channelId), 'metadata.json');
   const meta = fs.existsSync(metaPath)
-    ? (JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as { items: Array<{ id: string; locks: string[] }> })
+    ? (JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as {
+      items: Array<{
+        id: string;
+        locks: string[];
+        title?: string;
+        fetchedAt?: string;
+        url?: string;
+        filePath?: string;
+      }>;
+    })
     : { items: [] };
-  meta.items.push({ id: item.id, locks: item.locks });
+  meta.items.push({
+    id: item.id,
+    locks: item.locks,
+    title: item.title,
+    fetchedAt: item.fetchedAt,
+    url: item.url,
+    filePath: path.join('channels', channelId, 'content', path.basename(contentPath)).replace(/\\/g, '/'),
+  });
   fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+
+  const mapPath = path.join(tmpDir, '.res-content-id.map.json');
+  const currentMap = fs.existsSync(mapPath)
+    ? (JSON.parse(fs.readFileSync(mapPath, 'utf-8')) as Record<string, string>)
+    : {};
+  currentMap[item.id] = path.join('channels', channelId, 'content', path.basename(contentPath)).replace(/\\/g, '/');
+  fs.writeFileSync(mapPath, JSON.stringify(currentMap, null, 2));
+
   return item;
 }
 
 function contentPathForId(channelId: string, contentId: string): string | null {
-  const contentDir = path.join(channelDirForId(channelId), 'content');
-  if (!fs.existsSync(contentDir)) return null;
-  const entries = fs.readdirSync(contentDir, { withFileTypes: true }).filter((entry) => entry.isFile() && entry.name.endsWith('.md'));
-  for (const entry of entries) {
-    const filePath = path.join(contentDir, entry.name);
-    const raw = fs.readFileSync(filePath, 'utf-8');
-    if (raw.includes(`id: ${JSON.stringify(contentId)}`)) {
-      return filePath;
-    }
+  const mapPath = path.join(tmpDir, '.res-content-id.map.json');
+  if (!fs.existsSync(mapPath)) return null;
+  const idMap = JSON.parse(fs.readFileSync(mapPath, 'utf-8')) as Record<string, string>;
+  const relativePath = idMap[contentId];
+  if (!relativePath) return null;
+  const resolved = path.join(tmpDir, relativePath);
+  if (!resolved.includes(path.join('channels', channelId, 'content'))) {
+    return null;
   }
-  return null;
+  return fs.existsSync(resolved) ? resolved : null;
 }
 
 // ─── initialize ──────────────────────────────────────────────────────────────
@@ -530,7 +544,7 @@ describe('listRetained', () => {
     expect(retained[0].content).toBe('# Hello');
   });
 
-  it('returns metadata fields from markdown frontmatter', () => {
+  it('returns metadata fields from metadata records', () => {
     const res = makeReservoir();
     const ch = res.addChannel({ name: 'Meta', fetchMethod: FetchMethod.RSS, url: 'u' });
     addTestItem(res, ch.id, {
@@ -708,7 +722,7 @@ describe('clean', () => {
 });
 
 describe('content storage format', () => {
-  it('uses title-based content filenames and markdown frontmatter', () => {
+  it('uses title-based content filenames and stores IDs in global id map', () => {
     const res = makeReservoir();
     const ch = res.addChannel({
       name: 'Storage',
@@ -729,14 +743,54 @@ describe('content storage format', () => {
     expect(files).toContain('my-test-title.md');
 
     const raw = fs.readFileSync(path.join(contentDir, 'my-test-title.md'), 'utf-8');
-    expect(raw.startsWith('---\n')).toBe(true);
-    expect(raw).toContain(`id: ${JSON.stringify('fmt1')}`);
-    expect(raw).toContain(`title: ${JSON.stringify('My Test Title')}`);
+    expect(raw).toBe('# Body');
+
+    const idMap = JSON.parse(fs.readFileSync(path.join(tmpDir, '.res-content-id.map.json'), 'utf-8')) as Record<string, string>;
+    expect(idMap.fmt1).toBe(path.join('channels', ch.id, 'content', 'my-test-title.md').replace(/\\/g, '/'));
 
     const metadata = JSON.parse(fs.readFileSync(path.join(channelDirForId(ch.id), 'metadata.json'), 'utf-8')) as {
       items: Array<Record<string, unknown>>;
     };
-    expect(metadata.items).toEqual([{ id: 'fmt1', locks: [] }]);
+    expect(metadata.items).toEqual([
+      {
+        id: 'fmt1',
+        locks: [],
+        title: 'My Test Title',
+        fetchedAt: '2024-01-01T00:00:00.000Z',
+        filePath: path.join('channels', ch.id, 'content', 'my-test-title.md').replace(/\\/g, '/'),
+      },
+    ]);
+  });
+
+  it('removes orphaned metadata when tracked files are deleted during sync', async () => {
+    const res = makeReservoir();
+    const ch = res.addChannel({
+      name: 'Orphans',
+      fetchMethod: FetchMethod.RSS,
+      url: 'https://example.com/feed',
+    });
+
+    addTestItem(res, ch.id, {
+      id: 'orphan1',
+      title: 'Orphaned Item',
+      fetchedAt: '2024-01-01T00:00:00.000Z',
+      locks: ['pin'],
+      content: '# Orphan content',
+    });
+
+    const filePath = contentPathForId(ch.id, 'orphan1');
+    expect(filePath).not.toBeNull();
+    fs.unlinkSync(filePath!);
+
+    await res.syncContentTracking();
+
+    const metadata = JSON.parse(fs.readFileSync(path.join(channelDirForId(ch.id), 'metadata.json'), 'utf-8')) as {
+      items: Array<Record<string, unknown>>;
+    };
+    expect(metadata.items).toEqual([]);
+
+    const listed = res.listContent({ channelIds: [ch.id], retained: true });
+    expect(listed).toEqual([]);
   });
 });
 

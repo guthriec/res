@@ -53,6 +53,7 @@ export interface BackgroundFetcherState extends WorkerState {}
 export interface SchedulerReservoir {
   listChannels(): Channel[];
   fetchChannel(channelId: string): Promise<unknown>;
+  syncContentTracking?(): Promise<void>;
 }
 
 export interface BackgroundFetcherRuntimeOptions {
@@ -202,6 +203,10 @@ export async function runScheduledFetchTick(
     onFetchError?: (channelId: string, message: string) => void;
   } = {},
 ): Promise<void> {
+  if (typeof reservoir.syncContentTracking === 'function') {
+    await reservoir.syncContentTracking();
+  }
+
   const channels = reservoir.listChannels();
 
   for (const channel of channels) {
@@ -250,6 +255,7 @@ export async function runBackgroundFetcherLoop(
   const logger = options.logger ?? ((message: string): void => console.log(message));
   const errorLogger = options.errorLogger ?? ((message: string): void => console.error(message));
   const reservoir = Reservoir.load(absDir);
+  await reservoir.syncContentTracking();
 
   const existing = readBackgroundFetcherStatusFile(absDir);
   const state = createBackgroundFetcherState({
@@ -268,7 +274,40 @@ export async function runBackgroundFetcherLoop(
     });
   };
 
+  let pendingResync: NodeJS.Timeout | undefined;
+  let channelsWatcher: fs.FSWatcher | undefined;
+  const scheduleResync = (): void => {
+    if (pendingResync) {
+      clearTimeout(pendingResync);
+    }
+    pendingResync = setTimeout(() => {
+      void reservoir.syncContentTracking().catch((err: unknown) => {
+        const message = err instanceof Error ? err.message : String(err);
+        errorLogger(`[sync] failed: ${message}`);
+      });
+    }, 250);
+  };
+
+  const channelsDir = path.join(absDir, 'channels');
+  if (fs.existsSync(channelsDir)) {
+    try {
+      channelsWatcher = fs.watch(channelsDir, { recursive: true }, () => {
+        scheduleResync();
+      });
+    } catch {
+      channelsWatcher = undefined;
+    }
+  }
+
   const shutdown = (): void => {
+    if (pendingResync) {
+      clearTimeout(pendingResync);
+      pendingResync = undefined;
+    }
+    if (channelsWatcher) {
+      channelsWatcher.close();
+      channelsWatcher = undefined;
+    }
     clearPidFile(absDir);
     persist();
     process.exit(0);

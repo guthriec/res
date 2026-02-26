@@ -42,18 +42,14 @@ function resolveUserConfigDir(): string {
 interface ContentLockState {
   id: string;
   locks: string[];
-}
-
-interface ContentFrontmatter {
-  id: string;
-  channelId: string;
+  filePath?: string;
   title: string;
   fetchedAt: string;
   url?: string;
 }
 
 interface ParsedContentFile {
-  meta: ContentFrontmatter;
+  id: string;
   content: string;
   filePath: string;
 }
@@ -134,22 +130,10 @@ function normalizeDuplicateStrategy(value?: DuplicateStrategy | string): Duplica
   throw new Error(`Invalid duplicate strategy '${value}'. Expected 'overwrite' or 'keep both'.`);
 }
 
-function toFrontmatter(meta: ContentFrontmatter, content: string): string {
-  const lines = [
-    '---',
-    `id: ${JSON.stringify(meta.id)}`,
-    `channelId: ${JSON.stringify(meta.channelId)}`,
-    `title: ${JSON.stringify(meta.title)}`,
-    `fetchedAt: ${JSON.stringify(meta.fetchedAt)}`,
-  ];
-  if (meta.url !== undefined) {
-    lines.push(`url: ${JSON.stringify(meta.url)}`);
-  }
-  lines.push('---');
-  return `${lines.join('\n')}\n${content}`;
-}
-
-function parseFrontmatter(rawContent: string): { meta: ContentFrontmatter | null; content: string } {
+function parseLegacyFrontmatter(rawContent: string): {
+  meta: { id: string; channelId: string; title: string; fetchedAt: string; url?: string } | null;
+  content: string;
+} {
   if (!rawContent.startsWith('---\n')) {
     return { meta: null, content: rawContent };
   }
@@ -436,6 +420,7 @@ export class Reservoir {
   // ─── Fetch / refresh ──────────────────────────────────────────────────────
 
   async fetchChannel(channelId: string): Promise<ContentItem[]> {
+    await this.syncContentTracking();
     const channel = this.viewChannel(channelId);
     const fetchArgs = channel.fetchArgs;
     let fetched: FetchedContent[];
@@ -470,35 +455,55 @@ export class Reservoir {
       let contentPath: string;
 
       if (shouldOverwrite && existingEntry) {
-        id = existingEntry.contentId ?? await this.idAllocator.nextId();
+        id = existingEntry.contentId ?? await this.idAllocator.assignIdToFile(this.toRelativePath(existingEntry.filePath));
         const existingState = metadataById.get(id);
         if (existingState) {
           locks = [...existingState.locks];
+          existingState.title = item.title;
+          existingState.url = item.url;
+          existingState.fetchedAt = new Date().toISOString();
+          existingState.filePath = this.toRelativePath(existingEntry.filePath);
         } else {
           locks = [...channel.retainedLocks];
-          const lockState = { id, locks: [...locks] };
+          const lockState: ContentLockState = {
+            id,
+            locks: [...locks],
+            title: item.title,
+            fetchedAt: new Date().toISOString(),
+            url: item.url,
+            filePath: this.toRelativePath(existingEntry.filePath),
+          };
           metadata.items.push(lockState);
           metadataById.set(id, lockState);
         }
         contentPath = existingEntry.filePath;
       } else {
-        id = await this.idAllocator.nextId();
+        contentPath = this.createUniqueContentPath(contentDir, this.contentFileStemForFetchedItem(item));
+        id = await this.idAllocator.assignIdToFile(this.toRelativePath(contentPath));
         locks = [...channel.retainedLocks];
-        const lockState = { id, locks: [...locks] };
+        const lockState: ContentLockState = {
+          id,
+          locks: [...locks],
+          title: item.title,
+          fetchedAt: new Date().toISOString(),
+          url: item.url,
+          filePath: this.toRelativePath(contentPath),
+        };
         metadata.items.push(lockState);
         metadataById.set(id, lockState);
-        contentPath = this.createUniqueContentPath(contentDir, this.contentFileStemForFetchedItem(item));
       }
 
       const fetchedAt = new Date().toISOString();
-      const frontmatter: ContentFrontmatter = {
-        id,
-        channelId,
-        title: item.title,
-        fetchedAt,
-        url: item.url,
-      };
-      fs.writeFileSync(contentPath, toFrontmatter(frontmatter, item.content));
+      const state = metadataById.get(id);
+      if (state) {
+        state.title = item.title;
+        state.fetchedAt = fetchedAt;
+        state.url = item.url;
+        state.filePath = this.toRelativePath(contentPath);
+      }
+
+      await this.idAllocator.setMapping(id, this.toRelativePath(contentPath));
+      fs.writeFileSync(contentPath, item.content);
       existingByDedupeKey.set(dedupeKey, { filePath: contentPath, contentId: id });
 
       const resourceDirectoryName = path.basename(contentPath, '.md');
@@ -561,9 +566,13 @@ export class Reservoir {
 
         const parsed = parsedById.get(state.id);
         if (!parsed) continue;
-        const relativePath = path.relative(this.dir, parsed.filePath);
+        const relativePath = this.toRelativePath(parsed.filePath);
         results.push({
-          ...parsed.meta,
+          id: state.id,
+          channelId: channel.id,
+          title: state.title,
+          fetchedAt: state.fetchedAt,
+          url: state.url,
           locks: [...state.locks],
           content: parsed.content,
           filePath: relativePath,
@@ -669,8 +678,12 @@ export class Reservoir {
         if (!parsed) continue;
         if (item.locks.length === 0) {
           candidates.push({
-            ...parsed.meta,
-            ...item,
+            id: item.id,
+            channelId: channel.id,
+            title: item.title,
+            fetchedAt: item.fetchedAt,
+            url: item.url,
+            locks: item.locks,
             filePath: parsed.filePath,
           });
         }
@@ -697,7 +710,13 @@ export class Reservoir {
     const metaPath = path.join(this.resolveChannelDir(channelId), CHANNEL_METADATA_FILE);
     if (!fs.existsSync(metaPath)) return { items: [] };
 
-    const raw = JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as { items?: Array<ContentMetadata | ContentLockState | { id: string; read: boolean }> };
+    const raw = JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as {
+      items?: Array<
+        ContentMetadata |
+        (ContentLockState & { read?: boolean; fileName?: string }) |
+        { id: string; read: boolean }
+      >
+    };
     const items = Array.isArray(raw.items) ? raw.items : [];
 
     const lockStateItems: ContentLockState[] = [];
@@ -711,8 +730,32 @@ export class Reservoir {
 
       if ('locks' in item && Array.isArray(item.locks)) {
         const locks = normalizeLocks(item.locks);
-        lockStateItems.push({ id: item.id, locks });
+        const entry = item as ContentLockState & { fileName?: string };
+        const title = typeof entry.title === 'string' && entry.title.trim().length > 0
+          ? entry.title
+          : item.id;
+        const fetchedAt = typeof entry.fetchedAt === 'string' && entry.fetchedAt.trim().length > 0
+          ? entry.fetchedAt
+          : new Date().toISOString();
+        const filePathRaw = typeof entry.filePath === 'string'
+          ? entry.filePath
+          : typeof entry.fileName === 'string'
+            ? path.join(CHANNELS_DIR, channelId, CONTENT_DIR, entry.fileName)
+            : undefined;
+        const filePath = filePathRaw ? this.normalizeRelativePath(filePathRaw) : undefined;
+
+        lockStateItems.push({
+          id: item.id,
+          locks,
+          title,
+          fetchedAt,
+          url: typeof entry.url === 'string' ? entry.url : undefined,
+          filePath,
+        });
         if (locks.length !== item.locks.length) {
+          needsWrite = true;
+        }
+        if (title !== entry.title || fetchedAt !== entry.fetchedAt || filePath !== entry.filePath) {
           needsWrite = true;
         }
         continue;
@@ -720,7 +763,12 @@ export class Reservoir {
 
       if ('read' in item && typeof item.read === 'boolean') {
         const locks = item.read ? [] : [GLOBAL_LOCK_NAME];
-        lockStateItems.push({ id: item.id, locks });
+        lockStateItems.push({
+          id: item.id,
+          locks,
+          title: item.id,
+          fetchedAt: new Date().toISOString(),
+        });
         needsWrite = true;
         continue;
       }
@@ -728,7 +776,13 @@ export class Reservoir {
       const legacyItem = item as ContentMetadata;
       const legacyRead = (legacyItem as { read?: boolean }).read;
       const locks = legacyRead === false ? [GLOBAL_LOCK_NAME] : [];
-      lockStateItems.push({ id: legacyItem.id, locks });
+      lockStateItems.push({
+        id: legacyItem.id,
+        locks,
+        title: legacyItem.title,
+        fetchedAt: legacyItem.fetchedAt,
+        url: legacyItem.url,
+      });
       needsWrite = true;
     }
 
@@ -919,21 +973,31 @@ export class Reservoir {
   private buildExistingContentByDedupeKey(channelId: string, idField?: string): Map<string, ExistingContentEntry> {
     const configuredIdField = normalizeIdField(idField);
     const entries = new Map<string, ExistingContentEntry>();
-    const parsedById = this.readContentFilesById(channelId);
+    const contentDir = path.join(this.resolveChannelDir(channelId), CONTENT_DIR);
+    if (!fs.existsSync(contentDir)) return entries;
+    const metadataById = new Map(this.loadMetadata(channelId).items.map((item) => [item.id, item]));
 
-    for (const parsed of parsedById.values()) {
+    for (const entry of fs.readdirSync(contentDir, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.md')) continue;
+      const filePath = path.join(contentDir, entry.name);
+      const relativePath = this.toRelativePath(filePath);
+      const contentId = this.idAllocator.findIdByFile(relativePath);
       let key: string | undefined;
       if (configuredIdField) {
-        const bodyFields = parseInlineFrontmatter(parsed.content);
+        const raw = fs.readFileSync(filePath, 'utf-8');
+        const bodyFields = parseInlineFrontmatter(raw);
         const bodyValue = bodyFields[configuredIdField]?.trim();
         if (bodyValue && bodyValue.length > 0) {
           key = bodyValue;
         }
       }
       if (!key) {
-        key = path.basename(parsed.filePath, '.md');
+        key = path.basename(filePath, '.md');
       }
-      entries.set(key, { filePath: parsed.filePath, contentId: parsed.meta.id });
+      const metadataFilePath = contentId ? metadataById.get(contentId)?.filePath : undefined;
+      const resolvedContentId = contentId
+        ?? (metadataFilePath ? this.idAllocator.findIdByFile(metadataFilePath) : undefined);
+      entries.set(key, { filePath, contentId: resolvedContentId });
     }
 
     return entries;
@@ -955,20 +1019,138 @@ export class Reservoir {
     const parsedById = new Map<string, ParsedContentFile>();
     if (!fs.existsSync(contentDir)) return parsedById;
 
+    const metadataById = new Map(this.loadMetadata(channelId).items.map((item) => [item.id, item]));
+
     for (const entry of fs.readdirSync(contentDir, { withFileTypes: true })) {
       if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.md')) continue;
       const filePath = path.join(contentDir, entry.name);
       const raw = fs.readFileSync(filePath, 'utf-8');
-      const parsed = parseFrontmatter(raw);
-      if (!parsed.meta?.id) continue;
-      parsedById.set(parsed.meta.id, {
-        meta: parsed.meta,
-        content: parsed.content,
-        filePath,
-      });
+      const relativePath = this.toRelativePath(filePath);
+      const mappedId = this.idAllocator.findIdByFile(relativePath);
+
+      if (mappedId) {
+        parsedById.set(mappedId, {
+          id: mappedId,
+          content: raw,
+          filePath,
+        });
+        continue;
+      }
+
+      const legacy = parseLegacyFrontmatter(raw);
+      if (legacy.meta?.id) {
+        parsedById.set(legacy.meta.id, {
+          id: legacy.meta.id,
+          content: legacy.content,
+          filePath,
+        });
+        continue;
+      }
+
+      for (const state of metadataById.values()) {
+        if (state.filePath !== relativePath) continue;
+        parsedById.set(state.id, {
+          id: state.id,
+          content: raw,
+          filePath,
+        });
+        break;
+      }
     }
 
     return parsedById;
+  }
+
+  private normalizeRelativePath(relativePath: string): string {
+    return relativePath.replace(/\\/g, '/');
+  }
+
+  private toRelativePath(filePath: string): string {
+    return this.normalizeRelativePath(path.relative(this.dir, filePath));
+  }
+
+  private inferTitleFromFileName(filePath: string): string {
+    const stem = path.basename(filePath, '.md');
+    const title = stem
+      .replace(/[-_]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    return title.length > 0 ? title : 'content';
+  }
+
+  async syncContentTracking(): Promise<void> {
+    const channels = this.listChannels();
+    const allMappings = this.idAllocator.listMappings();
+    const staleIds = Object.entries(allMappings)
+      .filter(([, relPath]) => !fs.existsSync(path.join(this.dir, relPath)))
+      .map(([id]) => id);
+    await Promise.all(staleIds.map((id) => this.idAllocator.removeMappingById(id)));
+
+    for (const channel of channels) {
+      const channelDir = this.resolveChannelDir(channel.id);
+      const contentDir = path.join(channelDir, CONTENT_DIR);
+      const channelContentPrefix = this.normalizeRelativePath(path.join(CHANNELS_DIR, channel.id, CONTENT_DIR)) + '/';
+      if (!fs.existsSync(contentDir)) {
+        fs.mkdirSync(contentDir, { recursive: true });
+      }
+
+      const metadata = this.loadMetadata(channel.id);
+      metadata.items = metadata.items.filter((item) => {
+        const mappedRelativePath = this.idAllocator.getFileForId(item.id);
+        const candidatePath = mappedRelativePath ?? item.filePath;
+        if (!candidatePath) {
+          return false;
+        }
+        const normalizedCandidatePath = this.normalizeRelativePath(candidatePath);
+        if (!normalizedCandidatePath.startsWith(channelContentPrefix)) {
+          return false;
+        }
+        return fs.existsSync(path.join(this.dir, normalizedCandidatePath));
+      });
+
+      const byId = new Map(metadata.items.map((item) => [item.id, item]));
+      const seenIds = new Set<string>();
+
+      for (const entry of fs.readdirSync(contentDir, { withFileTypes: true })) {
+        if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.md')) continue;
+        const filePath = path.join(contentDir, entry.name);
+        const relativePath = this.toRelativePath(filePath);
+        let id = this.idAllocator.findIdByFile(relativePath);
+        if (!id) {
+          id = await this.idAllocator.assignIdToFile(relativePath);
+        }
+
+        seenIds.add(id);
+        const existing = byId.get(id);
+        if (!existing) {
+          const stat = fs.statSync(filePath);
+          const created: ContentLockState = {
+            id,
+            locks: [...channel.retainedLocks],
+            title: this.inferTitleFromFileName(filePath),
+            fetchedAt: stat.mtime.toISOString(),
+            filePath: relativePath,
+          };
+          metadata.items.push(created);
+          byId.set(id, created);
+          continue;
+        }
+
+        existing.filePath = relativePath;
+        if (!existing.title || existing.title.trim().length === 0) {
+          existing.title = this.inferTitleFromFileName(filePath);
+        }
+        if (!existing.fetchedAt || existing.fetchedAt.trim().length === 0) {
+          existing.fetchedAt = fs.statSync(filePath).mtime.toISOString();
+        }
+      }
+
+      const filtered = metadata.items.filter((item) => seenIds.has(item.id));
+      if (filtered.length !== metadata.items.length) {
+        metadata.items = filtered;
+      }
+      this.saveMetadata(channel.id, metadata);
+    }
   }
 
   private migrateLegacyContent(channelId: string, legacyItems: ContentMetadata[]): void {
@@ -981,17 +1163,10 @@ export class Reservoir {
       if (!fs.existsSync(legacyPath)) continue;
 
       const raw = fs.readFileSync(legacyPath, 'utf-8');
-      const parsed = parseFrontmatter(raw);
-      const frontmatter: ContentFrontmatter = {
-        id: item.id,
-        channelId: item.channelId,
-        title: item.title,
-        fetchedAt: item.fetchedAt,
-        url: item.url,
-      };
+      const parsed = parseLegacyFrontmatter(raw);
       const body = parsed.meta ? parsed.content : raw;
       const targetPath = this.createUniqueContentPath(contentDir, contentFileSlug(item.title));
-      fs.writeFileSync(targetPath, toFrontmatter(frontmatter, body));
+      fs.writeFileSync(targetPath, body);
       if (targetPath !== legacyPath) {
         fs.unlinkSync(legacyPath);
       }

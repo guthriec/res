@@ -63,7 +63,7 @@ Options:
   - `web_page`: include `--fetch-arg url=<page-url>`
 - `--rate-limit <seconds>`: rate-limit interval
 - `--refresh-interval <seconds>`: background refresh interval (default is 24h)
-- `--id-field <field>`: optional frontmatter field name used as the per-channel unique content identifier
+- `--id-field <field>`: optional fetched-item frontmatter field name used as the per-channel unique content identifier
   - when the field is missing on an item, deduplication falls back to filename
 - `--duplicate-strategy <overwrite|keep both>`: controls how duplicates are handled
   - `overwrite`: replace the existing content item for the same dedupe key
@@ -86,7 +86,7 @@ Updates any provided fields on the channel.
 
 Deduplication fields:
 
-- `--id-field` sets or updates the frontmatter field used as the unique identifier
+- `--id-field` sets or updates the fetched-item frontmatter field used as the unique identifier
 - `--duplicate-strategy` sets duplicate handling to `overwrite` or `keep both`
 
 `--fetch-arg` edits are key-scoped:
@@ -128,6 +128,11 @@ res start
 ```
 
 Runs background fetching in the current process.
+
+Behavior:
+
+- On startup, scans channel `content/` directories for untracked markdown files, assigns global IDs, and applies each channel's `retainedLocks` to newly tracked files
+- While running, periodically re-scans before each scheduled tick and also watches `channels/` for filesystem changes to trigger fast re-sync
 
 ### `status`
 

@@ -94,7 +94,7 @@ channelCmd
   .option('--fetch-arg <key=value>', 'fetcher argument (repeatable key=value)', collectOptionValue)
   .option('--rate-limit <seconds>', 'rate-limit interval in seconds')
   .option('--refresh-interval <seconds>', 'background refresh interval in seconds')
-  .option('--id-field <field>', 'optional frontmatter field name used for deduplication')
+  .option('--id-field <field>', 'optional field name in fetched item content frontmatter used for deduplication')
   .option('--duplicate-strategy <strategy>', 'duplicate handling: overwrite | keep both')
   .action((name: string, opts: ChannelAddCliOptions) => {
     const reservoir = loadReservoir(getGlobalDir());
@@ -110,7 +110,7 @@ channelCmd
   .option('--fetch-arg <key=value>', 'fetcher argument edits by key (repeatable key=value)', collectOptionValue)
   .option('--rate-limit <seconds>', 'new rate-limit interval in seconds')
   .option('--refresh-interval <seconds>', 'new background refresh interval in seconds')
-  .option('--id-field <field>', 'new frontmatter field name used for deduplication')
+  .option('--id-field <field>', 'new field name in fetched item content frontmatter used for deduplication')
   .option('--duplicate-strategy <strategy>', 'new duplicate handling: overwrite | keep both')
   .action((id: string, opts: ChannelEditCliOptions) => {
     const reservoir = loadReservoir(getGlobalDir());

@@ -34,4 +34,18 @@ describe('ContentIdAllocator', () => {
     expect(new Set(ids).size).toBe(25);
     expect(ids.map(Number).sort((a, b) => a - b)).toEqual(Array.from({ length: 25 }, (_, i) => i + 1));
   });
+
+  it('tracks IDs as a map from global id to relative filename', async () => {
+    const allocator = ContentIdAllocator.forReservoir(tmpDir);
+
+    const id = await allocator.assignIdToFile('channels/ch-a/content/item.md');
+    expect(id).toBe('1');
+    expect(allocator.getFileForId(id)).toBe('channels/ch-a/content/item.md');
+
+    await allocator.setMapping(id, 'channels/ch-a/content/item-renamed.md');
+    expect(allocator.getFileForId(id)).toBe('channels/ch-a/content/item-renamed.md');
+
+    await allocator.removeMappingById(id);
+    expect(allocator.getFileForId(id)).toBeUndefined();
+  });
 });
