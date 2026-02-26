@@ -154,9 +154,11 @@ channelCmd
 program
   .command('start')
   .description('Run background fetching in this process')
-  .action(async () => {
+  .option('--log-level <level>', 'logging verbosity: error | info | debug | silent')
+  .action(async (opts: { logLevel?: 'error' | 'info' | 'debug' | 'silent' }) => {
     const reservoir = loadReservoir(getGlobalDir());
     await startBackgroundFetcher(reservoir.directory, {
+      logLevel: opts.logLevel,
       logger: (message) => console.log(message),
       errorLogger: (message) => console.error(message),
     });

@@ -56,10 +56,13 @@ export interface SchedulerReservoir {
   syncContentTracking?(): Promise<void>;
 }
 
+export type LogLevel = 'error' | 'info' | 'debug' | 'silent';
+
 export interface BackgroundFetcherRuntimeOptions {
   tickIntervalMs?: number;
   logger?: (message: string) => void;
   errorLogger?: (message: string) => void;
+  logLevel?: LogLevel;
 }
 
 export interface StartBackgroundFetcherOptions extends BackgroundFetcherRuntimeOptions {
@@ -168,6 +171,21 @@ function getItemCount(result: unknown): number | null {
   return Array.isArray(result) ? result.length : null;
 }
 
+function normalizeLogLevel(raw?: string): LogLevel {
+  const value = raw?.trim().toLowerCase();
+  if (value === 'error' || value === 'info' || value === 'debug' || value === 'silent') {
+    return value;
+  }
+  return 'info';
+}
+
+function shouldEmit(level: LogLevel, eventLevel: Exclude<LogLevel, 'silent'>): boolean {
+  if (level === 'silent') return false;
+  if (level === 'debug') return true;
+  if (level === 'info') return eventLevel === 'info' || eventLevel === 'error';
+  return eventLevel === 'error';
+}
+
 export async function startBackgroundFetcher(
   reservoirDir: string,
   options: StartBackgroundFetcherOptions = {},
@@ -252,8 +270,22 @@ export async function runBackgroundFetcherLoop(
 ): Promise<void> {
   const absDir = path.resolve(reservoirDir);
   const tickIntervalMs = options.tickIntervalMs ?? 1000;
+  const activeLogLevel = normalizeLogLevel(options.logLevel ?? process.env.RES_LOG_LEVEL);
   const logger = options.logger ?? ((message: string): void => console.log(message));
   const errorLogger = options.errorLogger ?? ((message: string): void => console.error(message));
+  const emit = (eventLevel: Exclude<LogLevel, 'silent'>, message: string): void => {
+    if (!shouldEmit(activeLogLevel, eventLevel)) {
+      return;
+    }
+    if (eventLevel === 'error') {
+      errorLogger(message);
+      return;
+    }
+    logger(message);
+  };
+
+  process.env.RES_LOG_LEVEL = activeLogLevel;
+
   const reservoir = Reservoir.load(absDir);
   await reservoir.syncContentTracking();
 
@@ -283,7 +315,7 @@ export async function runBackgroundFetcherLoop(
     pendingResync = setTimeout(() => {
       void reservoir.syncContentTracking().catch((err: unknown) => {
         const message = err instanceof Error ? err.message : String(err);
-        errorLogger(`[sync] failed: ${message}`);
+        emit('error', `[sync] failed: ${message}`);
       });
     }, 250);
   };
@@ -317,16 +349,16 @@ export async function runBackgroundFetcherLoop(
   process.on('SIGINT', shutdown);
 
   persist();
-  logger(`Background fetcher started (pid ${process.pid})`);
+  emit('info', `Background fetcher started (pid ${process.pid})`);
 
   while (true) {
     await runScheduledFetchTick(reservoir, state, Date.now(), {
       onFetchSuccess: (channelId, itemCount) => {
         const suffix = itemCount === null ? '' : ` (${itemCount} item(s))`;
-        logger(`[${channelId}] fetched${suffix}`);
+        emit('info', `[${channelId}] fetched${suffix}`);
       },
       onFetchError: (channelId, message) => {
-        errorLogger(`[${channelId}] fetch failed: ${message}`);
+        emit('error', `[${channelId}] fetch failed: ${message}`);
       },
     });
     persist();

@@ -124,7 +124,7 @@ Prints JSON array of channels with an additional `path` field (`channels/<channe
 ### `start`
 
 ```bash
-res start
+res start [--log-level <error|info|debug|silent>]
 ```
 
 Runs background fetching in the current process.
@@ -133,6 +133,11 @@ Behavior:
 
 - On startup, scans channel `content/` directories for untracked markdown files, assigns global IDs, and applies each channel's `retainedLocks` to newly tracked files
 - While running, periodically re-scans before each scheduled tick and also watches `channels/` for filesystem changes to trigger fast re-sync
+- `--log-level` controls all background-fetcher logging:
+  - `error`: only errors
+  - `info` (default): startup + fetch summaries + errors
+  - `debug`: debug logging
+  - `silent`: no background-fetcher logs
 
 ### `status`
 

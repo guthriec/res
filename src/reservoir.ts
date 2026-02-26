@@ -221,6 +221,17 @@ function normalizeLocks(lockNames?: string[], options: { validateNames?: boolean
   return [...unique];
 }
 
+function isSyncDebugEnabled(): boolean {
+  const logLevel = process.env.RES_LOG_LEVEL?.trim().toLowerCase();
+  if (logLevel === 'debug') {
+    return true;
+  }
+
+  const legacy = process.env.RES_DEBUG_SYNC?.trim().toLowerCase();
+  if (!legacy) return false;
+  return legacy === '1' || legacy === 'true' || legacy === 'yes' || legacy === 'on';
+}
+
 export class Reservoir {
   private readonly dir: string;
   private config: ReservoirConfig;
@@ -531,7 +542,14 @@ export class Reservoir {
         content: item.content,
       });
     }
-    this.saveMetadata(channelId, metadata);
+    if (persisted.length > 0) {
+      this.saveMetadata(channelId, metadata);
+      if (isSyncDebugEnabled()) {
+        console.error(`[res sync] [${channelId}] wrote metadata after fetch (${persisted.length} item(s))`);
+      }
+    } else if (isSyncDebugEnabled()) {
+      console.error(`[res sync] [${channelId}] skipped metadata write after fetch (0 items)`);
+    }
     return persisted;
   }
 
@@ -1095,17 +1113,30 @@ export class Reservoir {
       }
 
       const metadata = this.loadMetadata(channel.id);
+      let metadataChanged = false;
+      let orphanedRemoved = 0;
+      let discoveredAdded = 0;
+      let recordsUpdated = 0;
       metadata.items = metadata.items.filter((item) => {
         const mappedRelativePath = this.idAllocator.getFileForId(item.id);
         const candidatePath = mappedRelativePath ?? item.filePath;
         if (!candidatePath) {
+          metadataChanged = true;
+          orphanedRemoved += 1;
           return false;
         }
         const normalizedCandidatePath = this.normalizeRelativePath(candidatePath);
         if (!normalizedCandidatePath.startsWith(channelContentPrefix)) {
+          metadataChanged = true;
+          orphanedRemoved += 1;
           return false;
         }
-        return fs.existsSync(path.join(this.dir, normalizedCandidatePath));
+        const exists = fs.existsSync(path.join(this.dir, normalizedCandidatePath));
+        if (!exists) {
+          metadataChanged = true;
+          orphanedRemoved += 1;
+        }
+        return exists;
       });
 
       const byId = new Map(metadata.items.map((item) => [item.id, item]));
@@ -1133,23 +1164,44 @@ export class Reservoir {
           };
           metadata.items.push(created);
           byId.set(id, created);
+          metadataChanged = true;
+          discoveredAdded += 1;
           continue;
         }
 
-        existing.filePath = relativePath;
+        if (existing.filePath !== relativePath) {
+          existing.filePath = relativePath;
+          metadataChanged = true;
+          recordsUpdated += 1;
+        }
         if (!existing.title || existing.title.trim().length === 0) {
           existing.title = this.inferTitleFromFileName(filePath);
+          metadataChanged = true;
+          recordsUpdated += 1;
         }
         if (!existing.fetchedAt || existing.fetchedAt.trim().length === 0) {
           existing.fetchedAt = fs.statSync(filePath).mtime.toISOString();
+          metadataChanged = true;
+          recordsUpdated += 1;
         }
       }
 
       const filtered = metadata.items.filter((item) => seenIds.has(item.id));
       if (filtered.length !== metadata.items.length) {
+        orphanedRemoved += metadata.items.length - filtered.length;
         metadata.items = filtered;
+        metadataChanged = true;
       }
-      this.saveMetadata(channel.id, metadata);
+      if (metadataChanged) {
+        this.saveMetadata(channel.id, metadata);
+        if (isSyncDebugEnabled()) {
+          console.error(
+            `[res sync] [${channel.id}] wrote metadata (removed=${orphanedRemoved}, added=${discoveredAdded}, updated=${recordsUpdated}, items=${metadata.items.length})`,
+          );
+        }
+      } else if (isSyncDebugEnabled()) {
+        console.error(`[res sync] [${channel.id}] no metadata changes`);
+      }
     }
   }
 
