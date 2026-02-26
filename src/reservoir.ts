@@ -8,7 +8,7 @@ import {
   ContentMetadata,
   ContentItem,
   FetchedContent,
-  DEFAULT_REFRESH_INTERVAL_MS,
+  DEFAULT_REFRESH_INTERVAL_SECONDS,
   GLOBAL_LOCK_NAME,
 } from './types';
 import { fetchRSS } from './fetchers/rss';
@@ -146,9 +146,13 @@ function normalizeChannel(rawChannel: Channel | (Omit<Channel, 'refreshInterval'
   const refreshInterval =
     typeof rawRefresh === 'number' && Number.isFinite(rawRefresh) && rawRefresh > 0
       ? rawRefresh
-      : DEFAULT_REFRESH_INTERVAL_MS;
+      : DEFAULT_REFRESH_INTERVAL_SECONDS;
+  const fetchArgs = Array.isArray(rest.fetchArgs)
+    ? rest.fetchArgs.filter((value) => typeof value === 'string').map((value) => value.trim()).filter((value) => value.length > 0)
+    : [];
   return {
     ...rest,
+    fetchArgs,
     refreshInterval,
     retainedLocks: normalizeLocks(rawChannel.retainedLocks),
   };
@@ -269,7 +273,7 @@ export class Reservoir {
       id: channelDirName,
       createdAt: new Date().toISOString(),
       ...config,
-      refreshInterval: config.refreshInterval ?? DEFAULT_REFRESH_INTERVAL_MS,
+      refreshInterval: config.refreshInterval ?? DEFAULT_REFRESH_INTERVAL_SECONDS,
       retainedLocks: normalizeLocks(config.retainedLocks),
     };
 
@@ -329,19 +333,18 @@ export class Reservoir {
 
   async fetchChannel(channelId: string): Promise<ContentItem[]> {
     const channel = this.viewChannel(channelId);
+    const fetchArgs = Array.isArray(channel.fetchArgs) ? channel.fetchArgs : [];
     let fetched: FetchedContent[];
 
     switch (channel.fetchMethod) {
       case 'rss':
-        if (!channel.url) throw new Error(`Channel ${channelId} has no URL configured`);
-        fetched = await fetchRSS(channel.url, channelId);
+        fetched = await fetchRSS(fetchArgs, channelId);
         break;
       case 'web_page':
-        if (!channel.url) throw new Error(`Channel ${channelId} has no URL configured`);
-        fetched = await fetchWebPage(channel.url, channelId);
+        fetched = await fetchWebPage(fetchArgs, channelId);
         break;
       default:
-        fetched = await fetchCustom(path.join(this.customFetchersDirectory, channel.fetchMethod), channelId);
+        fetched = await fetchCustom(path.join(this.customFetchersDirectory, channel.fetchMethod), channelId, fetchArgs);
         break;
     }
 

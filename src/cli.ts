@@ -16,13 +16,14 @@ function loadReservoir(dir: string): Reservoir {
   return Reservoir.load(path.resolve(dir));
 }
 
-function parseLockList(raw?: string): string[] | undefined {
-  if (!raw) return undefined;
-  const locks = raw
-    .split(',')
-    .map((lock) => lock.trim())
-    .filter((lock) => lock.length > 0);
-  return locks.length > 0 ? [...new Set(locks)] : [];
+function collectOptionValue(value: string, previous: string[] = []): string[] {
+  return [...previous, value];
+}
+
+function normalizeStringList(values?: string[]): string[] | undefined {
+  if (!Array.isArray(values)) return undefined;
+  const normalized = values.map((value) => value.trim()).filter((value) => value.length > 0);
+  return normalized.length > 0 ? [...new Set(normalized)] : [];
 }
 
 // ─── init ────────────────────────────────────────────────────────────────────
@@ -55,23 +56,21 @@ channelCmd
   .command('add <name>')
   .description('Add a new channel')
   .requiredOption('--type <type>', 'type: rss | web_page | <registered-fetcher-name>')
-  .option('--url <url>', 'URL (for rss or web_page types)')
-  .option('--rate-limit <ms>', 'rate-limit interval in milliseconds')
-  .option('--refresh-interval <ms>', 'background refresh interval in milliseconds')
-  .option('--retain-locks <names>', 'comma-separated lock names to apply to newly fetched content')
+  .option('--fetch-arg <value>', 'fetcher argument (repeatable)', collectOptionValue)
+  .option('--rate-limit <seconds>', 'rate-limit interval in seconds')
+  .option('--refresh-interval <seconds>', 'background refresh interval in seconds')
   .option('--dir <path>', 'reservoir directory', process.cwd())
   .action((name: string, opts: {
-    type: string; url?: string;
-    rateLimit?: string; refreshInterval?: string; retainLocks?: string; dir: string;
+    type: string; fetchArg?: string[];
+    rateLimit?: string; refreshInterval?: string; dir: string;
   }) => {
     const reservoir = loadReservoir(opts.dir);
     const channel = reservoir.addChannel({
       name,
       fetchMethod: opts.type as FetchMethod,
-      url: opts.url,
+      fetchArgs: normalizeStringList(opts.fetchArg),
       rateLimitInterval: opts.rateLimit !== undefined ? parseInt(opts.rateLimit, 10) : undefined,
       refreshInterval: opts.refreshInterval !== undefined ? parseInt(opts.refreshInterval, 10) : undefined,
-      retainedLocks: parseLockList(opts.retainLocks),
     });
     console.log(JSON.stringify(channel, null, 2));
   });
@@ -81,23 +80,21 @@ channelCmd
   .description('Edit an existing channel')
   .option('--name <name>', 'new channel name')
   .option('--type <type>', 'new type: rss | web_page | <registered-fetcher-name>')
-  .option('--url <url>', 'new URL')
-  .option('--rate-limit <ms>', 'new rate-limit interval in milliseconds')
-  .option('--refresh-interval <ms>', 'new background refresh interval in milliseconds')
-  .option('--retain-locks <names>', 'new comma-separated lock names for newly fetched content')
+  .option('--fetch-arg <value>', 'new fetcher argument list (repeatable)', collectOptionValue)
+  .option('--rate-limit <seconds>', 'new rate-limit interval in seconds')
+  .option('--refresh-interval <seconds>', 'new background refresh interval in seconds')
   .option('--dir <path>', 'reservoir directory', process.cwd())
   .action((id: string, opts: {
-    name?: string; type?: string; url?: string;
-    rateLimit?: string; refreshInterval?: string; retainLocks?: string; dir: string;
+    name?: string; type?: string; fetchArg?: string[];
+    rateLimit?: string; refreshInterval?: string; dir: string;
   }) => {
     const reservoir = loadReservoir(opts.dir);
     const updates: Record<string, unknown> = {};
     if (opts.name) updates.name = opts.name;
     if (opts.type) updates.fetchMethod = opts.type as FetchMethod;
-    if (opts.url) updates.url = opts.url;
+    if (opts.fetchArg) updates.fetchArgs = normalizeStringList(opts.fetchArg);
     if (opts.rateLimit !== undefined) updates.rateLimitInterval = parseInt(opts.rateLimit, 10);
     if (opts.refreshInterval !== undefined) updates.refreshInterval = parseInt(opts.refreshInterval, 10);
-    if (opts.retainLocks !== undefined) updates.retainedLocks = parseLockList(opts.retainLocks);
     const channel = reservoir.editChannel(id, updates);
     console.log(JSON.stringify(channel, null, 2));
   });

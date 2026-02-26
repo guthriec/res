@@ -4,7 +4,11 @@ import { fetchWebPageMarkdown } from './webpage';
 
 const parser = new Parser();
 
-export async function fetchRSS(url: string, _channelId: string): Promise<FetchedContent[]> {
+export async function fetchRSS(fetchArgs: string[], _channelId: string): Promise<FetchedContent[]> {
+  const url = fetchArgs[0];
+  if (!url) {
+    throw new Error('RSS fetcher requires a URL as the first fetch argument');
+  }
   const feed = await parser.parseURL(url);
 
   const toFetchedMarkdown = async (link?: string): Promise<string> => {

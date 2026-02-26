@@ -3,7 +3,7 @@ export enum FetchMethod {
   WebPage = 'web_page',
 }
 
-export const DEFAULT_REFRESH_INTERVAL_MS = 24 * 60 * 60 * 1000;
+export const DEFAULT_REFRESH_INTERVAL_SECONDS = 24 * 60 * 60;
 export const GLOBAL_LOCK_NAME = '[global]';
 
 export interface ReservoirConfig {
@@ -14,11 +14,11 @@ export interface ChannelConfig {
   name: string;
   /** Built-in fetch method or registered custom fetcher executable name */
   fetchMethod: FetchMethod | string;
-  /** URL for RSS or WebPage fetch methods */
-  url?: string;
-  /** Rate-limit interval in milliseconds */
+  /** Fetcher arguments forwarded to the configured fetch method */
+  fetchArgs?: string[];
+  /** Rate-limit interval in seconds */
   rateLimitInterval?: number;
-  /** Background refresh interval in milliseconds (defaults to 24h if omitted) */
+  /** Background refresh interval in seconds (defaults to 24h if omitted) */
   refreshInterval?: number;
   /** Lock names to apply automatically to newly fetched content */
   retainedLocks?: string[];

@@ -8,7 +8,7 @@ import {
   startBackgroundFetcher,
   stopBackgroundFetcher,
 } from '../src/background-fetcher';
-import { Channel, DEFAULT_REFRESH_INTERVAL_MS, FetchMethod } from '../src/types';
+import { Channel, DEFAULT_REFRESH_INTERVAL_SECONDS, FetchMethod } from '../src/types';
 
 let tmpDir: string;
 
@@ -29,7 +29,7 @@ function mkChannel(overrides: Partial<Channel> = {}): Channel {
     fetchMethod: overrides.fetchMethod ?? FetchMethod.RSS,
     url: overrides.url ?? 'https://example.com/feed',
     rateLimitInterval: overrides.rateLimitInterval,
-    refreshInterval: overrides.refreshInterval ?? DEFAULT_REFRESH_INTERVAL_MS,
+    refreshInterval: overrides.refreshInterval ?? DEFAULT_REFRESH_INTERVAL_SECONDS,
     retainedLocks: overrides.retainedLocks ?? [],
   };
 }
@@ -38,7 +38,7 @@ describe('runScheduledFetchTick', () => {
   it('fetches channels that have refresh intervals configured', async () => {
     const fetchChannel = vi.fn().mockResolvedValue([]);
     const reservoir = {
-      listChannels: () => [mkChannel({ id: 'scheduled', refreshInterval: 1000 })],
+      listChannels: () => [mkChannel({ id: 'scheduled', refreshInterval: 1 })],
       fetchChannel,
     };
 
@@ -70,7 +70,7 @@ describe('runScheduledFetchTick', () => {
   it('respects polling interval between attempts', async () => {
     const fetchChannel = vi.fn().mockResolvedValue([]);
     const reservoir = {
-      listChannels: () => [mkChannel({ id: 'scheduled', refreshInterval: 1000 })],
+      listChannels: () => [mkChannel({ id: 'scheduled', refreshInterval: 1 })],
       fetchChannel,
     };
 
@@ -90,7 +90,7 @@ describe('runScheduledFetchTick', () => {
       .mockResolvedValueOnce([]);
 
     const reservoir = {
-      listChannels: () => [mkChannel({ id: 'scheduled', refreshInterval: 1000 })],
+      listChannels: () => [mkChannel({ id: 'scheduled', refreshInterval: 1 })],
       fetchChannel,
     };
 

@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { Channel, DEFAULT_REFRESH_INTERVAL_MS } from './types';
+import { Channel, DEFAULT_REFRESH_INTERVAL_SECONDS } from './types';
 import { Reservoir } from './reservoir';
 
 const FETCHER_PID_FILE = '.res-fetcher.pid';
@@ -186,7 +186,7 @@ export async function startBackgroundFetcher(
 function channelPollInterval(channel: Channel): number {
   const refreshInterval = channel.refreshInterval > 0
     ? channel.refreshInterval
-    : DEFAULT_REFRESH_INTERVAL_MS;
+    : DEFAULT_REFRESH_INTERVAL_SECONDS;
   const rateLimit = channel.rateLimitInterval && channel.rateLimitInterval > 0
     ? channel.rateLimitInterval
     : 0;
@@ -205,11 +205,11 @@ export async function runScheduledFetchTick(
   const channels = reservoir.listChannels();
 
   for (const channel of channels) {
-    const pollInterval = channelPollInterval(channel);
+    const pollIntervalMs = channelPollInterval(channel) * 1000;
     const lastAttempt = state.lastAttemptAtByChannel[channel.id];
     if (lastAttempt) {
       const elapsed = nowMs - new Date(lastAttempt).getTime();
-      if (elapsed < pollInterval) {
+      if (elapsed < pollIntervalMs) {
         continue;
       }
     }

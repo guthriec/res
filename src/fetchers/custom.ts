@@ -52,6 +52,7 @@ function collectSupplementaryFiles(resourcesRoot: string): Array<{ relativePath:
 export async function fetchCustom(
   executablePath: string,
   channelId: string,
+  fetchArgs: string[] = [],
 ): Promise<FetchedContent[]> {
   const executableAbsolutePath = path.resolve(executablePath);
   if (!fs.existsSync(executableAbsolutePath)) {
@@ -63,7 +64,7 @@ export async function fetchCustom(
   fs.mkdirSync(outsDir, { recursive: true });
 
   try {
-    await execFileAsync(executableAbsolutePath, [], {
+    await execFileAsync(executableAbsolutePath, fetchArgs, {
       cwd: tempDir,
       env: {
         ...process.env,

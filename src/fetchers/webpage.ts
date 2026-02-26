@@ -38,7 +38,11 @@ export async function fetchWebPageMarkdown(url: string): Promise<string> {
   return convertWebPageHtmlToMarkdown(html);
 }
 
-export async function fetchWebPage(url: string, _channelId: string): Promise<FetchedContent[]> {
+export async function fetchWebPage(fetchArgs: string[], _channelId: string): Promise<FetchedContent[]> {
+  const url = fetchArgs[0];
+  if (!url) {
+    throw new Error('web_page fetcher requires a URL as the first fetch argument');
+  }
   const response = await fetch(url);
   if (!response.ok) {
     throw new Error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
