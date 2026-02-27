@@ -74,7 +74,6 @@ export async function fetchWebPage(fetchParams: Record<string, string> | undefin
   return [
     {
       sourceFileName: `${slugifyFileStem(title)}.md`,
-      url,
       content: markdown,
     },
   ];

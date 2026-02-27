@@ -44,11 +44,11 @@ export interface ContentMetadata {
   channelId: string;
   fetchedAt: string; // ISO timestamp
   locks: string[];
-  url?: string;
 }
 
 export interface ContentItem extends ContentMetadata {
   title: string;
+  url?: string;
   /** Full markdown content */
   content: string;
   /** Relative file path from reservoir root */
@@ -56,8 +56,6 @@ export interface ContentItem extends ContentMetadata {
 }
 
 export interface FetchedContent {
-  title?: string;
-  url?: string;
   content: string;
   sourceFileName?: string;
   supplementaryFiles?: Array<{

@@ -40,6 +40,10 @@ export async function fetchRSS(fetchParams: Record<string, string> | undefined, 
       const fetchedContent = fullFeedContent.length === 0 ? await toFetchedMarkdown(item.link) : '';
       const fullContent = fullFeedContent.length > 0 ? fullFeedContent : fetchedContent;
       const combined = [
+        '---',
+        `url: ${item.link ?? ''}`,
+        '---',
+        '',
         '## Snippet',
         '',
         snippet,
@@ -51,7 +55,6 @@ export async function fetchRSS(fetchParams: Record<string, string> | undefined, 
 
       return {
         sourceFileName: `${slugifyFileStem(item.title ?? item.link ?? 'content')}.md`,
-        url: item.link,
         content: combined,
       };
     }),

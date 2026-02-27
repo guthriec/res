@@ -49,7 +49,7 @@ describe('fetchRSS', () => {
     const items = await fetchRSS({ url: 'https://example.com/feed' }, 'chan-1');
     expect(items).toHaveLength(2);
     expect(items[0].sourceFileName).toBe('article-one.md');
-    expect(items[0].url).toBe('https://example.com/1');
+    expect(items[0].content).toContain('---\nurl: https://example.com/1\n---');
     expect(items[0].content).toContain('## Snippet');
     expect(items[0].content).toContain('Snippet one');
     expect(items[0].content).toContain('# Article One full text');
@@ -141,7 +141,6 @@ describe('fetchWebPage', () => {
   const items = await fetchWebPage({ url: 'https://example.com' }, 'chan-2');
     expect(items).toHaveLength(1);
     expect(items[0].sourceFileName).toBe('hello-world.md');
-    expect(items[0].url).toBe('https://example.com');
     expect(items[0].content).toContain('Main content only');
     expect(items[0].content).not.toContain('Footer noise');
   });

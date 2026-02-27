@@ -552,7 +552,7 @@ describe('listRetained', () => {
     expect(retained[0].content).toBe('# Hello');
   });
 
-  it('returns metadata fields from metadata records', () => {
+  it('returns URL from markdown frontmatter', () => {
     const res = makeReservoir();
     const ch = res.addChannel({ name: 'Meta', fetchMethod: FetchMethod.RSS, url: 'u' });
     addTestItem(res, ch.id, {
@@ -561,7 +561,13 @@ describe('listRetained', () => {
       fetchedAt: '2024-01-01T00:00:00.000Z',
       url: 'https://example.com/fm1',
       locks: [GLOBAL_LOCK_NAME],
-      content: '# Frontmatter body',
+      content: [
+        '---',
+        'url: https://example.com/fm1',
+        '---',
+        '',
+        '# Frontmatter body',
+      ].join('\n'),
     });
 
     const retained = res.listRetained();

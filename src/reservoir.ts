@@ -117,6 +117,11 @@ function parseInlineFrontmatter(rawContent: string): Record<string, string> {
   return fields;
 }
 
+function extractUrlFromContent(rawContent: string): string | undefined {
+  const url = parseInlineFrontmatter(rawContent).url?.trim();
+  return url && url.length > 0 ? url : undefined;
+}
+
 function normalizeIdField(idField?: string): string | undefined {
   if (typeof idField !== 'string') return undefined;
   const normalized = idField.trim();
@@ -400,6 +405,7 @@ export class Reservoir {
     const existingByDedupeKey = this.buildExistingContentByDedupeKey(channelId, channel.idField);
 
     for (const item of fetched) {
+      const contentUrl = extractUrlFromContent(item.content);
       const dedupeKey = this.resolveDedupeKeyForFetchedItem(item, channel.idField);
       const existingEntry = existingByDedupeKey.get(dedupeKey);
       const shouldOverwrite = channel.duplicateStrategy === 'overwrite' && existingEntry !== undefined;
@@ -413,7 +419,6 @@ export class Reservoir {
         const existingState = metadataById.get(id);
         if (existingState) {
           locks = [...existingState.locks];
-          existingState.url = item.url;
           existingState.fetchedAt = new Date().toISOString();
           existingState.filePath = this.toRelativePath(existingEntry.filePath);
         } else {
@@ -422,7 +427,6 @@ export class Reservoir {
             id,
             locks: [...locks],
             fetchedAt: new Date().toISOString(),
-            url: item.url,
             filePath: this.toRelativePath(existingEntry.filePath),
           };
           metadata.items.push(lockState);
@@ -437,7 +441,6 @@ export class Reservoir {
           id,
           locks: [...locks],
           fetchedAt: new Date().toISOString(),
-          url: item.url,
           filePath: this.toRelativePath(contentPath),
         };
         metadata.items.push(lockState);
@@ -448,7 +451,6 @@ export class Reservoir {
       const state = metadataById.get(id);
       if (state) {
         state.fetchedAt = fetchedAt;
-        state.url = item.url;
         state.filePath = this.toRelativePath(contentPath);
       }
 
@@ -477,7 +479,7 @@ export class Reservoir {
         title: this.inferTitleFromFileName(contentPath),
         fetchedAt,
         locks,
-        url: item.url,
+        url: contentUrl,
         content: item.content,
       });
     }
@@ -529,7 +531,7 @@ export class Reservoir {
           channelId: channel.id,
           title: this.inferTitleFromFileName(parsed.filePath),
           fetchedAt: state.fetchedAt,
-          url: state.url,
+          url: extractUrlFromContent(parsed.content),
           locks: [...state.locks],
           content: parsed.content,
           filePath: relativePath,
@@ -638,7 +640,6 @@ export class Reservoir {
             id: item.id,
             channelId: channel.id,
             fetchedAt: item.fetchedAt,
-            url: item.url,
             locks: item.locks,
             filePath: parsed.filePath,
           });
@@ -701,7 +702,6 @@ export class Reservoir {
           id: item.id,
           locks,
           fetchedAt,
-          url: typeof entry.url === 'string' ? entry.url : undefined,
           filePath,
         });
         if (locks.length !== item.locks.length) {
@@ -731,7 +731,6 @@ export class Reservoir {
         id: legacyItem.id,
         locks,
         fetchedAt: legacyItem.fetchedAt,
-        url: legacyItem.url,
       });
       needsWrite = true;
     }
@@ -892,12 +891,6 @@ export class Reservoir {
   private contentFileStemForFetchedItem(item: FetchedContent): string {
     if (item.sourceFileName && item.sourceFileName.trim().length > 0) {
       return path.basename(item.sourceFileName, path.extname(item.sourceFileName));
-    }
-    if (item.title && item.title.trim().length > 0) {
-      return contentFileSlug(item.title);
-    }
-    if (item.url && item.url.trim().length > 0) {
-      return contentFileSlug(item.url);
     }
     return 'content';
   }
