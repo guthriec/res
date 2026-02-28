@@ -50,6 +50,7 @@ describe('fetchRSS', () => {
     expect(items).toHaveLength(2);
     expect(items[0].sourceFileName).toBe('article-one.md');
     expect(items[0].content).toContain('---\nurl: https://example.com/1\n---');
+    expect(items[0].content).toContain('\n# Article One\n');
     expect(items[0].content).toContain('## Snippet');
     expect(items[0].content).toContain('Snippet one');
     expect(items[0].content).toContain('# Article One full text');

@@ -35,6 +35,7 @@ export async function fetchRSS(fetchParams: Record<string, string> | undefined, 
 
   const items = await Promise.all(
     (feed.items ?? []).map(async (item) => {
+      const title = (item.title ?? item.link ?? 'Untitled').trim() || 'Untitled';
       const fullFeedContent = (item['content:encoded'] ?? '').trim();
       const snippet = (item.contentSnippet ?? item.content ?? '').trim();
       const fetchedContent = fullFeedContent.length === 0 ? await toFetchedMarkdown(item.link) : '';
@@ -43,6 +44,8 @@ export async function fetchRSS(fetchParams: Record<string, string> | undefined, 
         '---',
         `url: ${item.link ?? ''}`,
         '---',
+        '',
+        `# ${title}`,
         '',
         '## Snippet',
         '',
