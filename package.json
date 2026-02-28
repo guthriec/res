@@ -1,9 +1,22 @@
 {
   "name": "res-md",
   "version": "0.1.0",
-  "description": "Collect web content into local reservoirs of markdown files",
+  "description": "Continually collect web content into local reservoirs of markdown files",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/guthriec/res.git"
+  },
+  "bugs": {
+    "url": "https://github.com/guthriec/res/issues"
+  },
+  "homepage": "https://github.com/guthriec/res#readme",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "bin": {
     "res": "dist/cli.js"
   },
@@ -14,6 +27,9 @@
     "lint": "npx tsc --noEmit",
     "prepublishOnly": "npm run build"
   },
+  "engines": {
+    "node": ">=20"
+  },
   "keywords": [
     "markdown",
     "rss",
@@ -23,7 +39,6 @@
   "license": "MIT",
   "dependencies": {
     "@mozilla/readability": "^0.6.0",
-    "@types/jsdom": "^28.0.0",
     "commander": "^14.0.3",
     "jsdom": "^28.1.0",
     "rss-parser": "^3.13.0",
@@ -31,6 +46,7 @@
     "uuid": "^11.1.0"
   },
   "devDependencies": {
+    "@types/jsdom": "^28.0.0",
     "@types/node": "^22.13.5",
     "@types/turndown": "^5.0.5",
     "typescript": "^5.9.3",

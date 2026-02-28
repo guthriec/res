@@ -38,12 +38,12 @@ describe('ContentIdAllocator', () => {
   it('tracks IDs as a map from global id to relative filename', async () => {
     const allocator = ContentIdAllocator.forReservoir(tmpDir);
 
-    const id = await allocator.assignIdToFile('channels/ch-a/content/item.md');
+    const id = await allocator.assignIdToFile('item/content.md');
     expect(id).toBe('1');
-    expect(allocator.getFileForId(id)).toBe('channels/ch-a/content/item.md');
+    expect(allocator.getFileForId(id)).toBe('item/content.md');
 
-    await allocator.setMapping(id, 'channels/ch-a/content/item-renamed.md');
-    expect(allocator.getFileForId(id)).toBe('channels/ch-a/content/item-renamed.md');
+    await allocator.setMapping(id, 'item-renamed/content.md');
+    expect(allocator.getFileForId(id)).toBe('item-renamed/content.md');
 
     await allocator.removeMappingById(id);
     expect(allocator.getFileForId(id)).toBeUndefined();

@@ -31,7 +31,7 @@ function makeReservoir(): Reservoir {
 }
 
 function channelDirForId(channelId: string): string {
-  const channelsDir = path.join(tmpDir, 'channels');
+  const channelsDir = path.join(tmpDir, '.res', 'channels');
   const entries = fs.readdirSync(channelsDir, { withFileTypes: true }).filter((entry) => entry.isDirectory());
   for (const entry of entries) {
     const dirPath = path.join(channelsDir, entry.name);
@@ -77,14 +77,14 @@ function addTestItem(
   ].join('\n');
 
   // Write content file
-  const contentDir = path.join(channelDirForId(channelId), 'content');
-  fs.mkdirSync(contentDir, { recursive: true });
-  let contentPath = path.join(contentDir, `${slug}.md`);
+  let contentDir = path.join(tmpDir, slug);
   let suffix = 2;
-  while (fs.existsSync(contentPath)) {
-    contentPath = path.join(contentDir, `${slug}-${suffix}.md`);
+  while (fs.existsSync(contentDir)) {
+    contentDir = path.join(tmpDir, `${slug}-${suffix}`);
     suffix += 1;
   }
+  fs.mkdirSync(contentDir, { recursive: true });
+  const contentPath = path.join(contentDir, 'content.md');
   fs.writeFileSync(contentPath, frontmatter);
 
   // Update metadata
@@ -125,9 +125,9 @@ describe('channel list output format', () => {
     const channels = res.listChannels();
     expect(channels).toHaveLength(2);
     
-    // Verify the expected format: [id] name (channels/id)
+    // Verify the expected format: [id] name (.res/channels/id)
     for (const channel of channels) {
-      const expectedPath = `channels/${channel.id}`;
+      const expectedPath = `.res/channels/${channel.id}`;
       const fullPath = path.join(tmpDir, expectedPath);
       
       // Verify the directory actually exists at that path
@@ -148,8 +148,8 @@ describe('channel list output format', () => {
     const channel = channels.find((c) => c.id === ch.id);
     expect(channel).toBeDefined();
     
-    // The path should be channels/<channelId>
-    const expectedPath = path.join(tmpDir, 'channels', channel!.id);
+    // The path should be .res/channels/<channelId>
+    const expectedPath = path.join(tmpDir, '.res', 'channels', channel!.id);
     expect(fs.existsSync(expectedPath)).toBe(true);
   });
 });
@@ -179,7 +179,7 @@ describe('retained list output format', () => {
       
       // Verify it's a relative path
       expect(item.filePath).not.toMatch(/^\//); // Should not start with /
-      expect(item.filePath).toMatch(/^channels\//); // Should start with channels/
+      expect(item.filePath).toMatch(/\/content\.md$/); // Should end in content.md
       expect(item.filePath).toMatch(/\.md$/); // Should end with .md
       
       // Verify the file actually exists
@@ -189,7 +189,7 @@ describe('retained list output format', () => {
     }
   });
 
-  it('file path contains correct channel and content directory structure', () => {
+  it('file path contains correct channel directory structure', () => {
     const res = makeReservoir();
     const ch = res.addChannel({
       name: 'News Feed',
@@ -205,12 +205,11 @@ describe('retained list output format', () => {
     const item = retained[0];
     expect(item.filePath).toBeDefined();
     
-    // Path should follow pattern: channels/<channelId>/content/<filename>.md
+    // Path should follow pattern: <content-directory>/content.md
     const pathParts = item.filePath!.split(path.sep);
-    expect(pathParts[0]).toBe('channels');
-    expect(pathParts[1]).toBe(ch.id);
-    expect(pathParts[2]).toBe('content');
-    expect(pathParts[3]).toMatch(/\.md$/);
+    expect(pathParts).toHaveLength(2);
+    expect(pathParts[0].length).toBeGreaterThan(0);
+    expect(pathParts[1]).toBe('content.md');
   });
 
   it('file path remains correct after retaining and releasing items', () => {
@@ -258,13 +257,11 @@ describe('retained list output format', () => {
 
     const retainedCh1 = res.listRetained([ch1.id]);
     expect(retainedCh1).toHaveLength(1);
-    expect(retainedCh1[0].filePath).toContain(ch1.id);
-    expect(retainedCh1[0].filePath).not.toContain(ch2.id);
+    expect(retainedCh1[0].id).not.toBeUndefined();
 
     const retainedCh2 = res.listRetained([ch2.id]);
     expect(retainedCh2).toHaveLength(1);
-    expect(retainedCh2[0].filePath).toContain(ch2.id);
-    expect(retainedCh2[0].filePath).not.toContain(ch1.id);
+    expect(retainedCh2[0].id).not.toBeUndefined();
   });
 
   it('handles multiple items in same channel with unique file paths', () => {
@@ -292,7 +289,7 @@ describe('retained list output format', () => {
 
     // All should be in the same channel directory
     for (const p of paths) {
-      expect(p).toContain(`channels/${ch.id}/content/`);
+      expect(p).toMatch(/\/content\.md$/);
     }
   });
 });

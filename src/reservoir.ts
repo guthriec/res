@@ -19,11 +19,12 @@ import { Fetcher } from './fetchers/types';
 import { ContentIdAllocator } from './content-id-allocator';
 
 const CONFIG_FILE = '.res-config.json';
+const RES_METADATA_DIR = '.res';
 const CHANNELS_DIR = 'channels';
 const CHANNEL_CONFIG_FILE = 'channel.json';
 const CHANNEL_METADATA_FILE = 'metadata.json';
-const CONTENT_DIR = 'content';
 const CUSTOM_FETCHERS_DIR = 'fetchers';
+const CONTENT_MARKDOWN_FILE = 'content.md';
 
 function resolveUserConfigDir(): string {
   const xdgConfigHome = process.env.XDG_CONFIG_HOME?.trim();
@@ -216,7 +217,7 @@ export class Reservoir {
       config.maxSizeMB = options.maxSizeMB;
     }
     fs.writeFileSync(path.join(absDir, CONFIG_FILE), JSON.stringify(config, null, 2));
-    fs.mkdirSync(path.join(absDir, CHANNELS_DIR), { recursive: true });
+    fs.mkdirSync(path.join(absDir, RES_METADATA_DIR, CHANNELS_DIR), { recursive: true });
     return new Reservoir(absDir, config);
   }
 
@@ -273,6 +274,22 @@ export class Reservoir {
     return path.join(resolveUserConfigDir(), CUSTOM_FETCHERS_DIR);
   }
 
+  setMaxSizeMB(maxSizeMB: number): ReservoirConfig {
+    if (!Number.isFinite(maxSizeMB) || maxSizeMB <= 0) {
+      throw new Error(`Invalid max size '${maxSizeMB}'. Expected a positive number.`);
+    }
+
+    const previousMaxSizeMB = this.config.maxSizeMB;
+    this.config = { ...this.config, maxSizeMB };
+    this.saveReservoirConfig();
+
+    if (previousMaxSizeMB !== undefined && maxSizeMB < previousMaxSizeMB) {
+      this.clean();
+    }
+
+    return this.reservoirConfig;
+  }
+
   addFetcher(executablePath: string): { name: string; destinationPath: string } {
     const sourcePath = path.resolve(executablePath);
     if (!fs.existsSync(sourcePath)) {
@@ -303,7 +320,7 @@ export class Reservoir {
   // ─── Channel management ────────────────────────────────────────────────────
 
   addChannel(config: ChannelConfig): Channel {
-    const channelsDir = path.join(this.dir, CHANNELS_DIR);
+    const channelsDir = this.resolveChannelMetadataRoot();
     const baseDirName = channelDirectorySlug(config.name);
     let channelDirName = baseDirName;
     let suffix = 2;
@@ -326,7 +343,7 @@ export class Reservoir {
     };
 
     const channelDir = path.join(channelsDir, channelDirName);
-    fs.mkdirSync(path.join(channelDir, CONTENT_DIR), { recursive: true });
+    fs.mkdirSync(channelDir, { recursive: true });
     fs.writeFileSync(path.join(channelDir, CHANNEL_CONFIG_FILE), JSON.stringify(channel, null, 2));
     fs.writeFileSync(path.join(channelDir, CHANNEL_METADATA_FILE), JSON.stringify({ items: [] }, null, 2));
     return channel;
@@ -366,7 +383,7 @@ export class Reservoir {
   }
 
   listChannels(): Channel[] {
-    const channelsDir = path.join(this.dir, CHANNELS_DIR);
+    const channelsDir = this.resolveChannelMetadataRoot();
     if (!fs.existsSync(channelsDir)) return [];
     return fs
       .readdirSync(channelsDir, { withFileTypes: true })
@@ -398,8 +415,7 @@ export class Reservoir {
 
     // Persist fetched items
     const metadata = this.loadMetadata(channelId);
-    const channelDir = this.resolveChannelDir(channelId);
-    const contentDir = path.join(channelDir, CONTENT_DIR);
+    const contentRoot = this.resolveChannelContentRoot(channelId);
     const persisted: ContentItem[] = [];
     const metadataById = new Map(metadata.items.map((entry) => [entry.id, entry]));
     const existingByDedupeKey = this.buildExistingContentByDedupeKey(channelId, channel.idField);
@@ -434,7 +450,7 @@ export class Reservoir {
         }
         contentPath = existingEntry.filePath;
       } else {
-        contentPath = this.createUniqueContentPath(contentDir, this.contentFileStemForFetchedItem(item));
+        contentPath = this.createUniqueContentPath(contentRoot, this.contentFileStemForFetchedItem(item));
         id = await this.idAllocator.assignIdToFile(this.toRelativePath(contentPath));
         locks = [...channel.retainedLocks];
         const lockState: ContentLockState = {
@@ -454,22 +470,21 @@ export class Reservoir {
         state.filePath = this.toRelativePath(contentPath);
       }
 
+      const resourcesRoot = this.contentResourcesDirectoryForPath(contentPath);
+      if (shouldOverwrite && fs.existsSync(resourcesRoot)) {
+        fs.rmSync(resourcesRoot, { recursive: true, force: true });
+      }
+      fs.mkdirSync(path.dirname(contentPath), { recursive: true });
+
       await this.idAllocator.setMapping(id, this.toRelativePath(contentPath));
       fs.writeFileSync(contentPath, item.content);
       existingByDedupeKey.set(dedupeKey, { filePath: contentPath, contentId: id });
 
-      const resourceDirectoryName = path.basename(contentPath, '.md');
-      if (resourceDirectoryName.length > 0) {
-        const destinationRoot = path.join(contentDir, resourceDirectoryName);
-        if (shouldOverwrite && fs.existsSync(destinationRoot)) {
-          fs.rmSync(destinationRoot, { recursive: true, force: true });
-        }
-        if (Array.isArray(item.supplementaryFiles) && item.supplementaryFiles.length > 0) {
-          for (const file of item.supplementaryFiles) {
-            const destinationPath = path.join(destinationRoot, file.relativePath);
-            fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
-            fs.writeFileSync(destinationPath, file.content);
-          }
+      if (Array.isArray(item.supplementaryFiles) && item.supplementaryFiles.length > 0) {
+        for (const file of item.supplementaryFiles) {
+          const destinationPath = path.join(resourcesRoot, file.relativePath);
+          fs.mkdirSync(path.dirname(destinationPath), { recursive: true });
+          fs.writeFileSync(destinationPath, file.content);
         }
       }
 
@@ -624,8 +639,12 @@ export class Reservoir {
   clean(): void {
     if (!this.config.maxSizeMB) return;
     const maxBytes = this.config.maxSizeMB * 1024 * 1024;
-    const channelsDir = path.join(this.dir, CHANNELS_DIR);
-    if (this.getDirSize(channelsDir) <= maxBytes) return;
+    const contentEntries = fs
+      .readdirSync(this.dir, { withFileTypes: true })
+      .filter((entry) => entry.name !== RES_METADATA_DIR)
+      .map((entry) => path.join(this.dir, entry.name));
+    const currentSize = contentEntries.reduce((total, entryPath) => total + this.getDirSize(entryPath), 0);
+    if (currentSize <= maxBytes) return;
 
     type Candidate = Omit<ContentMetadata, 'channelId'> & { channelId: string; filePath: string };
     const candidates: Candidate[] = [];
@@ -650,7 +669,7 @@ export class Reservoir {
     // Oldest first
     candidates.sort((a, b) => new Date(a.fetchedAt).getTime() - new Date(b.fetchedAt).getTime());
 
-    let totalSize = this.getDirSize(channelsDir);
+    let totalSize = currentSize;
     for (const candidate of candidates) {
       if (totalSize <= maxBytes) break;
       if (fs.existsSync(candidate.filePath)) {
@@ -659,6 +678,10 @@ export class Reservoir {
         this.removeFromMetadata(candidate.channelId, candidate.id);
       }
     }
+  }
+
+  private saveReservoirConfig(): void {
+    fs.writeFileSync(path.join(this.dir, CONFIG_FILE), JSON.stringify(this.config, null, 2));
   }
 
   // ─── Private helpers ──────────────────────────────────────────────────────
@@ -694,7 +717,7 @@ export class Reservoir {
         const filePathRaw = typeof entry.filePath === 'string'
           ? entry.filePath
           : typeof entry.fileName === 'string'
-            ? path.join(CHANNELS_DIR, channelId, CONTENT_DIR, entry.fileName)
+            ? `${entry.fileName.replace(/\.md$/i, '')}.md`
             : undefined;
         const filePath = filePathRaw ? this.normalizeRelativePath(filePathRaw) : undefined;
 
@@ -752,7 +775,7 @@ export class Reservoir {
   }
 
   private resolveChannelDir(channelId: string): string {
-    const channelsDir = path.join(this.dir, CHANNELS_DIR);
+    const channelsDir = this.resolveChannelMetadataRoot();
     if (!fs.existsSync(channelsDir)) {
       throw new Error(`Channel not found: ${channelId}`);
     }
@@ -787,6 +810,24 @@ export class Reservoir {
     }
 
     throw new Error(`Channel not found: ${channelId}`);
+  }
+
+  private resolveChannelMetadataRoot(): string {
+    const metadataRoot = path.join(this.dir, RES_METADATA_DIR, CHANNELS_DIR);
+    if (fs.existsSync(metadataRoot)) {
+      return metadataRoot;
+    }
+
+    const legacyRoot = path.join(this.dir, CHANNELS_DIR);
+    if (fs.existsSync(legacyRoot)) {
+      return legacyRoot;
+    }
+
+    return metadataRoot;
+  }
+
+  private resolveChannelContentRoot(channelId: string): string {
+    return path.join(this.dir, channelId);
   }
 
   private findItem(contentId: string): { channelId: string; index: number } | null {
@@ -882,6 +923,8 @@ export class Reservoir {
 
   private getDirSize(dir: string): number {
     if (!fs.existsSync(dir)) return 0;
+    const stat = fs.statSync(dir);
+    if (stat.isFile()) return stat.size;
     return fs.readdirSync(dir, { withFileTypes: true }).reduce((acc, entry) => {
       const p = path.join(dir, entry.name);
       return acc + (entry.isDirectory() ? this.getDirSize(p) : fs.statSync(p).size);
@@ -910,26 +953,26 @@ export class Reservoir {
   private buildExistingContentByDedupeKey(channelId: string, idField?: string): Map<string, ExistingContentEntry> {
     const configuredIdField = normalizeIdField(idField);
     const entries = new Map<string, ExistingContentEntry>();
-    const contentDir = path.join(this.resolveChannelDir(channelId), CONTENT_DIR);
-    if (!fs.existsSync(contentDir)) return entries;
     const metadataById = new Map(this.loadMetadata(channelId).items.map((item) => [item.id, item]));
+    const parsedById = this.readContentFilesById(channelId);
 
-    for (const entry of fs.readdirSync(contentDir, { withFileTypes: true })) {
-      if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.md')) continue;
-      const filePath = path.join(contentDir, entry.name);
+    for (const parsed of parsedById.values()) {
+      const filePath = parsed.filePath;
       const relativePath = this.toRelativePath(filePath);
       const contentId = this.idAllocator.findIdByFile(relativePath);
       let key: string | undefined;
       if (configuredIdField) {
-        const raw = fs.readFileSync(filePath, 'utf-8');
-        const bodyFields = parseInlineFrontmatter(raw);
+        const bodyFields = parseInlineFrontmatter(parsed.content);
         const bodyValue = bodyFields[configuredIdField]?.trim();
         if (bodyValue && bodyValue.length > 0) {
           key = bodyValue;
         }
       }
       if (!key) {
-        key = path.basename(filePath, '.md');
+        const fileName = path.basename(filePath, path.extname(filePath));
+        key = fileName.toLowerCase() === 'content'
+          ? path.basename(path.dirname(filePath))
+          : fileName;
       }
       const metadataFilePath = contentId ? metadataById.get(contentId)?.filePath : undefined;
       const resolvedContentId = contentId
@@ -942,47 +985,37 @@ export class Reservoir {
 
   private createUniqueContentPath(contentDir: string, fileStem: string): string {
     const base = contentFileSlug(fileStem);
-    let candidate = path.join(contentDir, `${base}.md`);
+    let candidatePath = path.join(contentDir, `${base}.md`);
     let suffix = 1;
-    while (fs.existsSync(candidate)) {
-      candidate = path.join(contentDir, `${base}-${suffix}.md`);
+    while (fs.existsSync(candidatePath)) {
+      candidatePath = path.join(contentDir, `${base}-${suffix}.md`);
       suffix += 1;
     }
-    return candidate;
+    fs.mkdirSync(contentDir, { recursive: true });
+    return candidatePath;
+  }
+
+  private contentResourcesDirectoryForPath(contentPath: string): string {
+    return path.join(path.dirname(contentPath), path.basename(contentPath, path.extname(contentPath)));
   }
 
   private readContentFilesById(channelId: string): Map<string, ParsedContentFile> {
-    const contentDir = path.join(this.resolveChannelDir(channelId), CONTENT_DIR);
     const parsedById = new Map<string, ParsedContentFile>();
-    if (!fs.existsSync(contentDir)) return parsedById;
-
     const metadataById = new Map(this.loadMetadata(channelId).items.map((item) => [item.id, item]));
 
-    for (const entry of fs.readdirSync(contentDir, { withFileTypes: true })) {
-      if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.md')) continue;
-      const filePath = path.join(contentDir, entry.name);
-      const raw = fs.readFileSync(filePath, 'utf-8');
-      const relativePath = this.toRelativePath(filePath);
-      const mappedId = this.idAllocator.findIdByFile(relativePath);
-
-      if (mappedId) {
-        parsedById.set(mappedId, {
-          id: mappedId,
-          content: raw,
-          filePath,
-        });
-        continue;
-      }
-
-      for (const state of metadataById.values()) {
-        if (state.filePath !== relativePath) continue;
-        parsedById.set(state.id, {
-          id: state.id,
-          content: raw,
-          filePath,
-        });
-        break;
-      }
+    for (const state of metadataById.values()) {
+      const mappedPath = this.idAllocator.getFileForId(state.id);
+      const candidate = mappedPath ?? state.filePath;
+      if (!candidate) continue;
+      const normalized = this.normalizeRelativePath(candidate);
+      const absolutePath = path.join(this.dir, normalized);
+      if (!fs.existsSync(absolutePath) || !absolutePath.toLowerCase().endsWith('.md')) continue;
+      const raw = fs.readFileSync(absolutePath, 'utf-8');
+      parsedById.set(state.id, {
+        id: state.id,
+        content: raw,
+        filePath: absolutePath,
+      });
     }
 
     return parsedById;
@@ -997,7 +1030,10 @@ export class Reservoir {
   }
 
   private inferTitleFromFileName(filePath: string): string {
-    const stem = path.basename(filePath, '.md');
+    const fileName = path.basename(filePath, '.md');
+    const stem = fileName.toLowerCase() === 'content'
+      ? path.basename(path.dirname(filePath))
+      : fileName;
     const title = stem
       .replace(/[-_]+/g, ' ')
       .replace(/\s+/g, ' ')
@@ -1014,17 +1050,9 @@ export class Reservoir {
     await Promise.all(staleIds.map((id) => this.idAllocator.removeMappingById(id)));
 
     for (const channel of channels) {
-      const channelDir = this.resolveChannelDir(channel.id);
-      const contentDir = path.join(channelDir, CONTENT_DIR);
-      const channelContentPrefix = this.normalizeRelativePath(path.join(CHANNELS_DIR, channel.id, CONTENT_DIR)) + '/';
-      if (!fs.existsSync(contentDir)) {
-        fs.mkdirSync(contentDir, { recursive: true });
-      }
-
       const metadata = this.loadMetadata(channel.id);
       let metadataChanged = false;
       let orphanedRemoved = 0;
-      let discoveredAdded = 0;
       let recordsUpdated = 0;
       metadata.items = metadata.items.filter((item) => {
         const mappedRelativePath = this.idAllocator.getFileForId(item.id);
@@ -1035,11 +1063,6 @@ export class Reservoir {
           return false;
         }
         const normalizedCandidatePath = this.normalizeRelativePath(candidatePath);
-        if (!normalizedCandidatePath.startsWith(channelContentPrefix)) {
-          metadataChanged = true;
-          orphanedRemoved += 1;
-          return false;
-        }
         const exists = fs.existsSync(path.join(this.dir, normalizedCandidatePath));
         if (!exists) {
           metadataChanged = true;
@@ -1051,39 +1074,21 @@ export class Reservoir {
       const byId = new Map(metadata.items.map((item) => [item.id, item]));
       const seenIds = new Set<string>();
 
-      for (const entry of fs.readdirSync(contentDir, { withFileTypes: true })) {
-        if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.md')) continue;
-        const filePath = path.join(contentDir, entry.name);
-        const relativePath = this.toRelativePath(filePath);
-        let id = this.idAllocator.findIdByFile(relativePath);
-        if (!id) {
-          id = await this.idAllocator.assignIdToFile(relativePath);
-        }
+      for (const item of metadata.items) {
+        const mappedRelativePath = this.idAllocator.getFileForId(item.id);
+        const relativePath = this.normalizeRelativePath(mappedRelativePath ?? item.filePath ?? '');
+        if (!relativePath) continue;
+        const absolutePath = path.join(this.dir, relativePath);
+        if (!fs.existsSync(absolutePath)) continue;
+        seenIds.add(item.id);
 
-        seenIds.add(id);
-        const existing = byId.get(id);
-        if (!existing) {
-          const stat = fs.statSync(filePath);
-          const created: ContentLockState = {
-            id,
-            locks: [...channel.retainedLocks],
-            fetchedAt: stat.mtime.toISOString(),
-            filePath: relativePath,
-          };
-          metadata.items.push(created);
-          byId.set(id, created);
-          metadataChanged = true;
-          discoveredAdded += 1;
-          continue;
-        }
-
-        if (existing.filePath !== relativePath) {
-          existing.filePath = relativePath;
+        if (item.filePath !== relativePath) {
+          item.filePath = relativePath;
           metadataChanged = true;
           recordsUpdated += 1;
         }
-        if (!existing.fetchedAt || existing.fetchedAt.trim().length === 0) {
-          existing.fetchedAt = fs.statSync(filePath).mtime.toISOString();
+        if (!item.fetchedAt || item.fetchedAt.trim().length === 0) {
+          item.fetchedAt = fs.statSync(absolutePath).mtime.toISOString();
           metadataChanged = true;
           recordsUpdated += 1;
         }
@@ -1099,7 +1104,7 @@ export class Reservoir {
         this.saveMetadata(channel.id, metadata);
         if (isSyncDebugEnabled()) {
           console.error(
-            `[res sync] [${channel.id}] wrote metadata (removed=${orphanedRemoved}, added=${discoveredAdded}, updated=${recordsUpdated}, items=${metadata.items.length})`,
+            `[res sync] [${channel.id}] wrote metadata (removed=${orphanedRemoved}, updated=${recordsUpdated}, items=${metadata.items.length})`,
           );
         }
       } else if (isSyncDebugEnabled()) {

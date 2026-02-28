@@ -10,6 +10,7 @@ import {
   startBackgroundFetcher,
   stopBackgroundFetcher,
 } from '../src/background-fetcher';
+import { Reservoir } from '../src/reservoir';
 import { Channel, DEFAULT_REFRESH_INTERVAL_SECONDS, FetchMethod } from '../src/types';
 
 let tmpDir: string;
@@ -37,6 +38,67 @@ function mkChannel(overrides: Partial<Channel> = {}): Channel {
 }
 
 describe('runScheduledFetchTick', () => {
+  it('runs a registered custom fetcher end-to-end and persists output', async () => {
+    const reservoir = Reservoir.initialize(tmpDir);
+    const fetcherBaseName = `custom-fetcher-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const executablePath = path.join(
+      tmpDir,
+      process.platform === 'win32' ? `${fetcherBaseName}.cmd` : `${fetcherBaseName}.sh`,
+    );
+
+    if (process.platform === 'win32') {
+      fs.writeFileSync(
+        executablePath,
+        [
+          '@echo off',
+          'mkdir outs 2>nul',
+          '(echo # Custom Scheduled Item)> outs\\from-custom.md',
+          'mkdir outs\\from-custom 2>nul',
+          '(echo attachment)> outs\\from-custom\\note.txt',
+        ].join('\r\n'),
+        'utf-8',
+      );
+    } else {
+      fs.writeFileSync(
+        executablePath,
+        [
+          '#!/bin/sh',
+          'cat <<\'EOF\' > outs/from-custom.md',
+          '# Custom Scheduled Item',
+          'EOF',
+          'mkdir -p outs/from-custom',
+          'cat <<\'EOF\' > outs/from-custom/note.txt',
+          'attachment',
+          'EOF',
+        ].join('\n'),
+        'utf-8',
+      );
+      fs.chmodSync(executablePath, 0o755);
+    }
+
+    const registered = reservoir.addFetcher(executablePath);
+    const channel = reservoir.addChannel({
+      name: 'Custom Scheduled',
+      fetchMethod: registered.name,
+      refreshInterval: 1,
+    });
+
+    const state = createBackgroundFetcherState();
+    const t0 = new Date('2026-01-01T00:00:00.000Z').getTime();
+    await runScheduledFetchTick(reservoir, state, t0);
+
+    const items = reservoir.listContent({ channelIds: [channel.id], retained: false });
+    expect(items).toHaveLength(1);
+    expect(items[0].content).toContain('# Custom Scheduled Item');
+
+    const markdownPath = path.join(tmpDir, channel.id, 'from-custom.md');
+    const supplementaryPath = path.join(tmpDir, channel.id, 'from-custom', 'note.txt');
+    expect(fs.existsSync(markdownPath)).toBe(true);
+    expect(fs.existsSync(supplementaryPath)).toBe(true);
+    expect(fs.readFileSync(supplementaryPath, 'utf-8')).toContain('attachment');
+    expect(state.lastFetchAtByChannel[channel.id]).toBeDefined();
+  });
+
   it('fetches channels that have refresh intervals configured', async () => {
     const fetchChannel = vi.fn().mockResolvedValue([]);
     const reservoir = {

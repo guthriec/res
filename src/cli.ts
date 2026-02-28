@@ -46,6 +46,15 @@ function parseNonNegativeInteger(value: string | undefined, name: string): numbe
   return parsed;
 }
 
+function parsePositiveNumber(value: string | undefined, name: string): number | undefined {
+  if (value === undefined) return undefined;
+  const parsed = parseFloat(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`Invalid ${name} value '${value}'. Expected a positive number.`);
+  }
+  return parsed;
+}
+
 function parseRetainedByList(value: string | undefined): string[] | undefined {
   if (value === undefined) return undefined;
   const values = value
@@ -66,9 +75,26 @@ program
   .option('--max-size <mb>', 'maximum total content size in MB')
   .action((opts: { maxSize?: string }) => {
     const dir = getGlobalDir() ?? process.cwd();
-    const maxSizeMB = opts.maxSize !== undefined ? parseFloat(opts.maxSize) : undefined;
+    const maxSizeMB = parsePositiveNumber(opts.maxSize, 'max-size');
     Reservoir.initialize(dir, { maxSizeMB });
     console.log(`Initialized reservoir at ${path.resolve(dir)}`);
+  });
+
+// ─── config ─────────────────────────────────────────────────────────────────
+
+const configCmd = program.command('config').description('Manage reservoir configuration');
+
+configCmd
+  .command('set-max-size <mb>')
+  .description('Update max content size in MB (decreasing this value triggers an eviction pass)')
+  .action((mb: string) => {
+    const reservoir = loadReservoir(getGlobalDir());
+    const maxSizeMB = parsePositiveNumber(mb, 'max-size');
+    if (maxSizeMB === undefined) {
+      throw new Error('Invalid max-size value.');
+    }
+    reservoir.setMaxSizeMB(maxSizeMB);
+    console.log(`Set max reservoir size to ${maxSizeMB} MB`);
   });
 
 program
@@ -140,7 +166,7 @@ channelCmd
     const channels = reservoir.listChannels();
     const output = channels.map((channel) => ({
       ...channel,
-      path: `channels/${channel.id}`,
+      path: `.res/channels/${channel.id}`,
     }));
     console.log(JSON.stringify(output, null, 2));
   });

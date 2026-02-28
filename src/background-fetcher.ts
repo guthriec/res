@@ -320,7 +320,7 @@ export async function runBackgroundFetcherLoop(
     }, 250);
   };
 
-  const channelsDir = path.join(absDir, 'channels');
+  const channelsDir = path.join(absDir, '.res', 'channels');
   if (fs.existsSync(channelsDir)) {
     try {
       channelsWatcher = fs.watch(channelsDir, { recursive: true }, () => {

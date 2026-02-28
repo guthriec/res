@@ -70,5 +70,85 @@ res stop
 Fetched markdown appears under:
 
 ```bash
-channels/weather-nyc/content/
+<content-slug>/content.md
 ```
+
+## Hacker News RSS + Ollama summarization workflow
+
+This example provides three shell scripts:
+
+- `hn-setup-channel.sh` – creates (or updates) a Hacker News RSS channel with a 1-hour refresh interval and applies a channel retention lock
+- `hn-recurring-summarize-to-obsidian.sh` – finds retained items for that lock, summarizes each item with a local Ollama instance, appends summaries to a markdown file, and (by default) releases the lock on processed content
+- `hn-schedule-launchd.sh` – installs/uninstalls a macOS `launchd` job to run the recurring summarizer on a fixed interval
+
+Prerequisites for these scripts:
+
+- `res` on `PATH`
+- `jq`
+- `curl`
+- local Ollama server for summarization script
+
+### Files
+
+- `hn-setup-channel.sh`
+- `hn-recurring-summarize-to-obsidian.sh`
+- `hn-schedule-launchd.sh`
+
+### Setup script
+
+From the repository root (inside an initialized reservoir):
+
+```bash
+chmod +x examples/hn-setup-channel.sh examples/hn-recurring-summarize-to-obsidian.sh examples/hn-schedule-launchd.sh
+
+./examples/hn-setup-channel.sh
+```
+
+The setup script will:
+
+- create/update `hacker-news` RSS channel using `https://hnrss.org/frontpage`
+- set refresh interval to 1 hour
+- apply `news-summarization` as a channel lock for new content
+- assume `channel_id = channel_name` (`hacker-news`)
+
+### Recurring summarization script
+
+Assumes a local Ollama server is running (default URL: `http://127.0.0.1:11434`):
+
+```bash
+./examples/hn-recurring-summarize-to-obsidian.sh
+```
+
+This script uses fixed defaults inside the file (`news-summarization`, `mistral-nemo:latest`), writes date+batch files in a flat structure (`news-summaries-YYYY-MM-DD-batch-N.md`), tags each digest title with the batch number, sends retained posts in one prompt per batch, and loops until no retained posts remain. It releases processed items with `res release range`.
+
+### Typical loop
+
+```bash
+# terminal 1: run background fetching
+res --dir . start
+
+# terminal 2: run manually / from scheduler
+./examples/hn-recurring-summarize-to-obsidian.sh
+```
+
+### Schedule on macOS with launchd
+
+Install a launch agent to run every 15 minutes:
+
+```bash
+./examples/hn-schedule-launchd.sh install
+```
+
+Check status:
+
+```bash
+./examples/hn-schedule-launchd.sh status
+```
+
+Uninstall:
+
+```bash
+./examples/hn-schedule-launchd.sh uninstall
+```
+
+This scheduler script is intentionally minimal and only supports `install` (default), `status`, and `uninstall`.

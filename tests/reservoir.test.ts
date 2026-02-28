@@ -38,7 +38,7 @@ function makeReservoir(opts: { maxSizeMB?: number } = {}): Reservoir {
 }
 
 function channelDirForId(channelId: string): string {
-  const channelsDir = path.join(tmpDir, 'channels');
+  const channelsDir = path.join(tmpDir, '.res', 'channels');
   const entries = fs.readdirSync(channelsDir, { withFileTypes: true }).filter((entry) => entry.isDirectory());
   for (const entry of entries) {
     const dirPath = path.join(channelsDir, entry.name);
@@ -50,6 +50,10 @@ function channelDirForId(channelId: string): string {
     }
   }
   throw new Error(`Channel not found in test helper: ${channelId}`);
+}
+
+function channelContentDir(channelId: string): string {
+  return path.join(tmpDir, channelId);
 }
 
 function addTestItem(
@@ -76,12 +80,12 @@ function addTestItem(
   const body = overrides.content ?? `# ${item.title}`;
 
   // Write content file
-  const contentDir = path.join(channelDirForId(channelId), 'content');
-  fs.mkdirSync(contentDir, { recursive: true });
-  let contentPath = path.join(contentDir, `${slug}.md`);
+  const channelDir = channelContentDir(channelId);
+  fs.mkdirSync(channelDir, { recursive: true });
+  let contentPath = path.join(channelDir, `${slug}.md`);
   let suffix = 2;
   while (fs.existsSync(contentPath)) {
-    contentPath = path.join(contentDir, `${slug}-${suffix}.md`);
+    contentPath = path.join(channelDir, `${slug}-${suffix}.md`);
     suffix += 1;
   }
   fs.writeFileSync(contentPath, body);
@@ -105,7 +109,7 @@ function addTestItem(
     locks: item.locks,
     fetchedAt: item.fetchedAt,
     url: item.url,
-    filePath: path.join('channels', channelId, 'content', path.basename(contentPath)).replace(/\\/g, '/'),
+    filePath: path.join(channelId, path.basename(contentPath)).replace(/\\/g, '/'),
   });
   fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
 
@@ -113,7 +117,7 @@ function addTestItem(
   const currentMap = fs.existsSync(mapPath)
     ? (JSON.parse(fs.readFileSync(mapPath, 'utf-8')) as Record<string, string>)
     : {};
-  currentMap[item.id] = path.join('channels', channelId, 'content', path.basename(contentPath)).replace(/\\/g, '/');
+  currentMap[item.id] = path.join(channelId, path.basename(contentPath)).replace(/\\/g, '/');
   fs.writeFileSync(mapPath, JSON.stringify(currentMap, null, 2));
 
   return item;
@@ -126,9 +130,6 @@ function contentPathForId(channelId: string, contentId: string): string | null {
   const relativePath = idMap[contentId];
   if (!relativePath) return null;
   const resolved = path.join(tmpDir, relativePath);
-  if (!resolved.includes(path.join('channels', channelId, 'content'))) {
-    return null;
-  }
   return fs.existsSync(resolved) ? resolved : null;
 }
 
@@ -142,7 +143,7 @@ describe('Reservoir.initialize', () => {
 
   it('creates channels directory', () => {
     Reservoir.initialize(tmpDir);
-    expect(fs.existsSync(path.join(tmpDir, 'channels'))).toBe(true);
+    expect(fs.existsSync(path.join(tmpDir, '.res', 'channels'))).toBe(true);
   });
 
   it('stores maxSizeMB in config', () => {
@@ -196,6 +197,47 @@ describe('Reservoir.loadNearest', () => {
   });
 });
 
+describe('setMaxSizeMB', () => {
+  it('updates config in memory and on disk', () => {
+    const res = makeReservoir({ maxSizeMB: 10 });
+
+    const updated = res.setMaxSizeMB(5);
+
+    expect(updated).toEqual({ maxSizeMB: 5 });
+    expect(res.reservoirConfig).toEqual({ maxSizeMB: 5 });
+
+    const config = JSON.parse(fs.readFileSync(path.join(tmpDir, '.res-config.json'), 'utf-8'));
+    expect(config).toEqual({ maxSizeMB: 5 });
+  });
+
+  it('triggers clean when max size decreases', () => {
+    const res = makeReservoir({ maxSizeMB: 1 });
+    const ch = res.addChannel({ name: 'C', fetchMethod: FetchMethod.RSS, url: 'u' });
+    const t1 = new Date(2024, 0, 1).toISOString();
+    const t2 = new Date(2024, 0, 2).toISOString();
+
+    addTestItem(res, ch.id, { id: 'old1', fetchedAt: t1, locks: [], content: 'x'.repeat(2000) });
+    addTestItem(res, ch.id, { id: 'new1', fetchedAt: t2, locks: [], content: 'x'.repeat(2000) });
+    expect(contentPathForId(ch.id, 'old1')).not.toBeNull();
+
+    res.setMaxSizeMB(0.000001);
+
+    expect(contentPathForId(ch.id, 'old1')).toBeNull();
+  });
+
+  it('does not trigger clean when max size increases', () => {
+    const res = makeReservoir({ maxSizeMB: 0.000001 });
+    const ch = res.addChannel({ name: 'C', fetchMethod: FetchMethod.RSS, url: 'u' });
+
+    addTestItem(res, ch.id, { id: 'keep1', locks: [], content: 'x'.repeat(5000) });
+    expect(contentPathForId(ch.id, 'keep1')).not.toBeNull();
+
+    res.setMaxSizeMB(10);
+
+    expect(contentPathForId(ch.id, 'keep1')).not.toBeNull();
+  });
+});
+
 // ─── addChannel ──────────────────────────────────────────────────────────────
 
 describe('addChannel', () => {
@@ -214,7 +256,7 @@ describe('addChannel', () => {
     expect(ch.retainedLocks).toEqual([]);
   });
 
-  it('creates channel directory with content subdir', () => {
+  it('creates channel directory with config and metadata', () => {
     const res = makeReservoir();
     const ch = res.addChannel({
       name: 'Test',
@@ -222,7 +264,6 @@ describe('addChannel', () => {
       url: 'https://example.com',
     });
     const channelDir = channelDirForId(ch.id);
-    expect(fs.existsSync(path.join(channelDir, 'content'))).toBe(true);
     expect(fs.existsSync(path.join(channelDir, 'channel.json'))).toBe(true);
     expect(fs.existsSync(path.join(channelDir, 'metadata.json'))).toBe(true);
   });
@@ -450,10 +491,11 @@ describe('fetchChannel', () => {
     await res.fetchChannel(ch.id);
     await res.fetchChannel(ch.id);
 
-    const contentDir = path.join(channelDirForId(ch.id), 'content');
+    const channelDir = channelDirForId(ch.id);
     const markdownFiles = fs
-      .readdirSync(contentDir)
-      .filter((name) => name.toLowerCase().endsWith('.md'))
+      .readdirSync(channelContentDir(ch.id), { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
+      .map((entry) => entry.name)
       .sort();
 
     expect(markdownFiles).toEqual(['dup-1.md', 'dup.md']);
@@ -726,6 +768,19 @@ describe('clean', () => {
     expect(contentPathForId(ch.id, 'old1')).toBeNull();
   });
 
+  it('prioritizes deleting unlocked items before locked items', () => {
+    const res = makeReservoir({ maxSizeMB: 0.004 });
+    const ch = res.addChannel({ name: 'C', fetchMethod: FetchMethod.RSS, url: 'u' });
+
+    addTestItem(res, ch.id, { id: 'locked1', locks: ['pin'], content: 'x'.repeat(3000) });
+    addTestItem(res, ch.id, { id: 'unlocked1', locks: [], content: 'x'.repeat(3000) });
+
+    res.clean();
+
+    expect(contentPathForId(ch.id, 'locked1')).not.toBeNull();
+    expect(contentPathForId(ch.id, 'unlocked1')).toBeNull();
+  });
+
   it('does not delete items that have locks', () => {
     const res = makeReservoir({ maxSizeMB: 0.000001 });
     const ch = res.addChannel({ name: 'C', fetchMethod: FetchMethod.RSS, url: 'u' });
@@ -736,7 +791,7 @@ describe('clean', () => {
 });
 
 describe('content storage format', () => {
-  it('uses title-based content filenames and stores IDs in global id map', () => {
+  it('uses channel/item markdown paths and stores IDs in global id map', () => {
     const res = makeReservoir();
     const ch = res.addChannel({
       name: 'Storage',
@@ -752,15 +807,14 @@ describe('content storage format', () => {
       locks: [],
     });
 
-    const contentDir = path.join(channelDirForId(ch.id), 'content');
-    const files = fs.readdirSync(contentDir);
-    expect(files).toContain('my-test-title.md');
+    const contentPath = path.join(channelContentDir(ch.id), 'my-test-title.md');
+    expect(fs.existsSync(contentPath)).toBe(true);
 
-    const raw = fs.readFileSync(path.join(contentDir, 'my-test-title.md'), 'utf-8');
+    const raw = fs.readFileSync(contentPath, 'utf-8');
     expect(raw).toBe('# Body');
 
     const idMap = JSON.parse(fs.readFileSync(path.join(tmpDir, '.res-content-id.map.json'), 'utf-8')) as Record<string, string>;
-    expect(idMap.fmt1).toBe(path.join('channels', ch.id, 'content', 'my-test-title.md').replace(/\\/g, '/'));
+    expect(idMap.fmt1).toBe(path.join(ch.id, 'my-test-title.md').replace(/\\/g, '/'));
 
     const metadata = JSON.parse(fs.readFileSync(path.join(channelDirForId(ch.id), 'metadata.json'), 'utf-8')) as {
       items: Array<Record<string, unknown>>;
@@ -770,7 +824,7 @@ describe('content storage format', () => {
         id: 'fmt1',
         locks: [],
         fetchedAt: '2024-01-01T00:00:00.000Z',
-        filePath: path.join('channels', ch.id, 'content', 'my-test-title.md').replace(/\\/g, '/'),
+        filePath: path.join(ch.id, 'my-test-title.md').replace(/\\/g, '/'),
       },
     ]);
   });

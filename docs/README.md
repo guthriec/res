@@ -8,6 +8,7 @@ This repository keeps long-form documentation in `docs/`.
   - `README.md` — overview, install, and quickstart
   - `commands.md` — complete command and option reference
   - `examples.md` — practical command recipes
+- `docs/ci-cd.md` — CI workflows, npm publish flow, and release checklist
 
 ## Scope
 

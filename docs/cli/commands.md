@@ -24,6 +24,22 @@ Options:
 
 - `--max-size <mb>`: max total content size in MB for `clean`
 
+## `config`
+
+Manage reservoir-level configuration.
+
+### `config set-max-size`
+
+```bash
+res config set-max-size <mb>
+```
+
+Behavior:
+
+- Updates `maxSizeMB` in reservoir config
+- If the new value is lower than the previous value, runs an eviction pass immediately (same behavior as `res clean`)
+- `<mb>` must be a positive number
+
 ## `add-fetcher`
 
 Register a custom fetcher executable in user config.
@@ -117,7 +133,7 @@ Prints channel JSON.
 res channel list
 ```
 
-Prints JSON array of channels with an additional `path` field (`channels/<channel-id>`).
+Prints JSON array of channels with an additional `path` field (`.res/channels/<channel-id>`).
 
 ## Background fetcher
 
@@ -131,8 +147,8 @@ Runs background fetching in the current process.
 
 Behavior:
 
-- On startup, scans channel `content/` directories for untracked markdown files, assigns global IDs, and applies each channel's `retainedLocks` to newly tracked files
-- While running, periodically re-scans before each scheduled tick and also watches `channels/` for filesystem changes to trigger fast re-sync
+- On startup, scans channel directories for untracked markdown files, assigns global IDs, and applies each channel's `retainedLocks` to newly tracked files
+- While running, periodically re-scans before each scheduled tick and also watches `.res/channels/` for filesystem changes to trigger fast re-sync
 - `--log-level` controls all background-fetcher logging:
   - `error`: only errors
   - `info` (default): startup + fetch summaries + errors
