@@ -10,7 +10,6 @@ interface TestContentMetadata {
   title: string;
   fetchedAt: string;
   locks: string[];
-  url?: string;
   filePath?: string;
 }
 
@@ -56,7 +55,6 @@ function addTestItem(
     title: overrides.title ?? 'Test Item',
     fetchedAt: overrides.fetchedAt ?? new Date().toISOString(),
     locks: overrides.locks ?? [],
-    url: overrides.url,
   };
 
   const slug = (item.title || 'content')
@@ -71,7 +69,6 @@ function addTestItem(
     `channelId: ${JSON.stringify(item.channelId)}`,
     `title: ${JSON.stringify(item.title)}`,
     `fetchedAt: ${JSON.stringify(item.fetchedAt)}`,
-    ...(item.url ? [`url: ${JSON.stringify(item.url)}`] : []),
     '---',
     overrides.content ?? `# ${item.title}`,
   ].join('\n');
@@ -91,7 +88,7 @@ function addTestItem(
   const metaPath = path.join(channelDirForId(channelId), 'metadata.json');
   const meta = fs.existsSync(metaPath)
     ? (JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as {
-      items: Array<{ id: string; locks: string[]; fetchedAt?: string; url?: string; filePath?: string }>;
+      items: Array<{ id: string; locks: string[]; fetchedAt?: string; filePath?: string }>;
     })
     : { items: [] };
   const relativePath = path.relative(tmpDir, contentPath).replace(/\\/g, '/');
@@ -99,7 +96,6 @@ function addTestItem(
     id: item.id,
     locks: item.locks,
     fetchedAt: item.fetchedAt,
-    url: item.url,
     filePath: relativePath,
   });
   fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
@@ -111,18 +107,18 @@ function addTestItem(
 describe('channel list output format', () => {
   it('includes relative directory path for each channel', () => {
     const res = makeReservoir();
-    const ch1 = res.addChannel({
+    const ch1 = res.channelController.addChannel({
       name: 'Tech News',
       fetchMethod: FetchMethod.RSS,
       url: 'https://example.com/rss',
     });
-    const ch2 = res.addChannel({
+    const ch2 = res.channelController.addChannel({
       name: 'Another Channel',
       fetchMethod: FetchMethod.RSS,
       url: 'https://example.com/rss2',
     });
 
-    const channels = res.listChannels();
+    const channels = res.channelController.listChannels();
     expect(channels).toHaveLength(2);
     
     // Verify the expected format: [id] name (.res/channels/id)
@@ -138,13 +134,13 @@ describe('channel list output format', () => {
 
   it('channel directory path matches channel ID', () => {
     const res = makeReservoir();
-    const ch = res.addChannel({
+    const ch = res.channelController.addChannel({
       name: 'Sample Channel',
       fetchMethod: FetchMethod.RSS,
       url: 'https://example.com/feed',
     });
 
-    const channels = res.listChannels();
+    const channels = res.channelController.listChannels();
     const channel = channels.find((c) => c.id === ch.id);
     expect(channel).toBeDefined();
     
@@ -159,17 +155,17 @@ describe('channel list output format', () => {
 describe('retained list output format', () => {
   it('includes relative file path for each retained item', () => {
     const res = makeReservoir();
-    const ch = res.addChannel({
+    const ch = res.channelController.addChannel({
       name: 'Test Channel',
       fetchMethod: FetchMethod.RSS,
       url: 'https://example.com/rss',
     });
 
     // Add content to the channel
-    addTestItem(ch.id, { title: 'Article One', content: '# Content 1', url: 'https://example.com/1', locks: [GLOBAL_LOCK_NAME] });
-    addTestItem(ch.id, { title: 'Article Two', content: '# Content 2', url: 'https://example.com/2', locks: [GLOBAL_LOCK_NAME] });
+    addTestItem(ch.id, { title: 'Article One', content: '# Content 1', locks: [GLOBAL_LOCK_NAME] });
+    addTestItem(ch.id, { title: 'Article Two', content: '# Content 2', locks: [GLOBAL_LOCK_NAME] });
 
-    const retained = res.listRetained();
+    const retained = res.contentController.listRetained();
     expect(retained).toHaveLength(2);
 
     for (const item of retained) {
@@ -191,7 +187,7 @@ describe('retained list output format', () => {
 
   it('file path contains correct channel directory structure', () => {
     const res = makeReservoir();
-    const ch = res.addChannel({
+    const ch = res.channelController.addChannel({
       name: 'News Feed',
       fetchMethod: FetchMethod.RSS,
       url: 'https://example.com/feed',
@@ -199,7 +195,7 @@ describe('retained list output format', () => {
 
     addTestItem(ch.id, { title: 'Breaking News', content: '# News content', locks: [GLOBAL_LOCK_NAME] });
 
-    const retained = res.listRetained();
+    const retained = res.contentController.listRetained();
     expect(retained).toHaveLength(1);
     
     const item = retained[0];
@@ -214,7 +210,7 @@ describe('retained list output format', () => {
 
   it('file path remains correct after retaining and releasing items', () => {
     const res = makeReservoir();
-    const ch = res.addChannel({
+    const ch = res.channelController.addChannel({
       name: 'Updates',
       fetchMethod: FetchMethod.RSS,
       url: 'https://example.com/updates',
@@ -222,17 +218,17 @@ describe('retained list output format', () => {
 
     addTestItem(ch.id, { title: 'Update 1', content: '# Update', locks: [GLOBAL_LOCK_NAME] });
 
-    const retainedBefore = res.listRetained();
+    const retainedBefore = res.contentController.listRetained();
     const itemId = retainedBefore[0].id;
     const originalPath = retainedBefore[0].filePath;
 
     // Release
-    res.releaseContent(itemId, GLOBAL_LOCK_NAME);
-    expect(res.listRetained()).toHaveLength(0);
+    res.lockController.releaseContent(itemId, GLOBAL_LOCK_NAME);
+    expect(res.contentController.listRetained()).toHaveLength(0);
 
     // Retain again
-    res.retainContent(itemId, GLOBAL_LOCK_NAME);
-    const retainedAfter = res.listRetained();
+    res.lockController.retainContent(itemId, GLOBAL_LOCK_NAME);
+    const retainedAfter = res.contentController.listRetained();
     expect(retainedAfter).toHaveLength(1);
     
     // File path should remain the same
@@ -241,12 +237,12 @@ describe('retained list output format', () => {
 
   it('filters by channel and maintains correct file paths', () => {
     const res = makeReservoir();
-    const ch1 = res.addChannel({
+    const ch1 = res.channelController.addChannel({
       name: 'Channel One',
       fetchMethod: FetchMethod.RSS,
       url: 'https://example.com/1',
     });
-    const ch2 = res.addChannel({
+    const ch2 = res.channelController.addChannel({
       name: 'Channel Two',
       fetchMethod: FetchMethod.RSS,
       url: 'https://example.com/2',
@@ -255,18 +251,18 @@ describe('retained list output format', () => {
     addTestItem(ch1.id, { title: 'Item from Ch1', content: '# Ch1', locks: [GLOBAL_LOCK_NAME] });
     addTestItem(ch2.id, { title: 'Item from Ch2', content: '# Ch2', locks: [GLOBAL_LOCK_NAME] });
 
-    const retainedCh1 = res.listRetained([ch1.id]);
+    const retainedCh1 = res.contentController.listRetained([ch1.id]);
     expect(retainedCh1).toHaveLength(1);
     expect(retainedCh1[0].id).not.toBeUndefined();
 
-    const retainedCh2 = res.listRetained([ch2.id]);
+    const retainedCh2 = res.contentController.listRetained([ch2.id]);
     expect(retainedCh2).toHaveLength(1);
     expect(retainedCh2[0].id).not.toBeUndefined();
   });
 
   it('handles multiple items in same channel with unique file paths', () => {
     const res = makeReservoir();
-    const ch = res.addChannel({
+    const ch = res.channelController.addChannel({
       name: 'Blog',
       fetchMethod: FetchMethod.RSS,
       url: 'https://example.com/blog',
@@ -276,7 +272,7 @@ describe('retained list output format', () => {
     addTestItem(ch.id, { title: 'Post 2', content: '# Post 2', locks: [GLOBAL_LOCK_NAME] });
     addTestItem(ch.id, { title: 'Post 3', content: '# Post 3', locks: [GLOBAL_LOCK_NAME] });
 
-    const retained = res.listRetained();
+    const retained = res.contentController.listRetained();
     expect(retained).toHaveLength(3);
 
     // All should have file paths

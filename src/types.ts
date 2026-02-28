@@ -5,9 +5,9 @@ export enum FetchMethod {
 
 export const DEFAULT_REFRESH_INTERVAL_SECONDS = 24 * 60 * 60;
 export const GLOBAL_LOCK_NAME = '[global]';
-export const DEFAULT_DUPLICATE_STRATEGY = 'keep both' as const;
+export const DEFAULT_DUPLICATE_STRATEGY = 'keep-both' as const;
 
-export type DuplicateStrategy = 'overwrite' | 'keep both';
+export type DuplicateStrategy = 'overwrite' | 'keep-both';
 
 export interface ReservoirConfig {
   maxSizeMB?: number;
@@ -25,7 +25,7 @@ export interface ChannelConfig {
   refreshInterval?: number;
   /** Optional frontmatter field used to identify duplicates within a channel */
   idField?: string;
-  /** Duplicate handling strategy (defaults to keep both) */
+  /** Duplicate handling strategy (defaults to keep-both) */
   duplicateStrategy?: DuplicateStrategy;
   /** Lock names to apply automatically to newly fetched content */
   retainedLocks?: string[];
@@ -47,8 +47,7 @@ export interface ContentMetadata {
 }
 
 export interface ContentItem extends ContentMetadata {
-  title: string;
-  url?: string;
+  title?: string;
   /** Full markdown content */
   content: string;
   /** Relative file path from reservoir root */

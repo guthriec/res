@@ -3,13 +3,13 @@ import { buildChannelEditUpdates, parseDuplicateStrategy } from '../src/cli-chan
 describe('cli channel option parsing', () => {
   it('rejects invalid duplicate-strategy values', () => {
     expect(() => parseDuplicateStrategy('replace')).toThrow(
-      "Invalid duplicate strategy 'replace'. Expected 'overwrite' or 'keep both'.",
+      "Invalid duplicate strategy 'replace'. Expected 'overwrite' or 'keep-both'.",
     );
   });
 
   it('accepts valid duplicate-strategy values', () => {
     expect(parseDuplicateStrategy('overwrite')).toBe('overwrite');
-    expect(parseDuplicateStrategy('keep both')).toBe('keep both');
+    expect(parseDuplicateStrategy('keep-both')).toBe('keep-both');
   });
 
   it('maps --id-field edit option into channel updates', () => {

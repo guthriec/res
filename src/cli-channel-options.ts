@@ -22,8 +22,8 @@ export interface ChannelEditCliOptions {
 
 export function parseDuplicateStrategy(value: string | undefined): DuplicateStrategy | undefined {
   if (value === undefined) return undefined;
-  if (value === 'overwrite' || value === 'keep both') return value;
-  throw new Error(`Invalid duplicate strategy '${value}'. Expected 'overwrite' or 'keep both'.`);
+  if (value === 'overwrite' || value === 'keep-both') return value;
+  throw new Error(`Invalid duplicate strategy '${value}'. Expected 'overwrite' or 'keep-both'.`);
 }
 
 export function buildChannelAddConfig(name: string, opts: ChannelAddCliOptions): ChannelConfig {

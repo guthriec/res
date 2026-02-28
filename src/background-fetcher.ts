@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Channel, DEFAULT_REFRESH_INTERVAL_SECONDS } from './types';
 import { Reservoir } from './reservoir';
+import { Logger, type LogLevel } from './logger';
 
 const FETCHER_PID_FILE = '.res-fetcher.pid';
 const FETCHER_STATUS_FILE = '.res-fetcher-status.json';
@@ -51,12 +52,13 @@ interface WorkerState {
 export interface BackgroundFetcherState extends WorkerState {}
 
 export interface SchedulerReservoir {
-  listChannels(): Channel[];
+  channelController?: {
+    listChannels(): Channel[];
+  };
+  listChannels?(): Channel[];
   fetchChannel(channelId: string): Promise<unknown>;
   syncContentTracking?(): Promise<void>;
 }
-
-export type LogLevel = 'error' | 'info' | 'debug' | 'silent';
 
 export interface BackgroundFetcherRuntimeOptions {
   tickIntervalMs?: number;
@@ -171,21 +173,6 @@ function getItemCount(result: unknown): number | null {
   return Array.isArray(result) ? result.length : null;
 }
 
-function normalizeLogLevel(raw?: string): LogLevel {
-  const value = raw?.trim().toLowerCase();
-  if (value === 'error' || value === 'info' || value === 'debug' || value === 'silent') {
-    return value;
-  }
-  return 'info';
-}
-
-function shouldEmit(level: LogLevel, eventLevel: Exclude<LogLevel, 'silent'>): boolean {
-  if (level === 'silent') return false;
-  if (level === 'debug') return true;
-  if (level === 'info') return eventLevel === 'info' || eventLevel === 'error';
-  return eventLevel === 'error';
-}
-
 export async function startBackgroundFetcher(
   reservoirDir: string,
   options: StartBackgroundFetcherOptions = {},
@@ -225,7 +212,9 @@ export async function runScheduledFetchTick(
     await reservoir.syncContentTracking();
   }
 
-  const channels = reservoir.listChannels();
+  const channels = reservoir.channelController
+    ? reservoir.channelController.listChannels()
+    : (reservoir.listChannels?.() ?? []);
 
   for (const channel of channels) {
     const pollIntervalMs = channelPollInterval(channel) * 1000;
@@ -270,18 +259,21 @@ export async function runBackgroundFetcherLoop(
 ): Promise<void> {
   const absDir = path.resolve(reservoirDir);
   const tickIntervalMs = options.tickIntervalMs ?? 1000;
-  const activeLogLevel = normalizeLogLevel(options.logLevel ?? process.env.RES_LOG_LEVEL);
-  const logger = options.logger ?? ((message: string): void => console.log(message));
-  const errorLogger = options.errorLogger ?? ((message: string): void => console.error(message));
+  const activeLogLevel = Logger.normalizeLogLevel(options.logLevel ?? process.env.RES_LOG_LEVEL);
+  const logger = new Logger(activeLogLevel, {
+    out: options.logger ?? ((message: string): void => console.log(message)),
+    err: options.errorLogger ?? ((message: string): void => console.error(message)),
+  });
   const emit = (eventLevel: Exclude<LogLevel, 'silent'>, message: string): void => {
-    if (!shouldEmit(activeLogLevel, eventLevel)) {
-      return;
-    }
     if (eventLevel === 'error') {
-      errorLogger(message);
+      logger.error(message);
       return;
     }
-    logger(message);
+    if (eventLevel === 'debug') {
+      logger.debug(message);
+      return;
+    }
+    logger.info(message);
   };
 
   process.env.RES_LOG_LEVEL = activeLogLevel;

@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { RelativePathHelper } from './relative-path-helper';
 
 const COUNTER_FILE = '.res-content-id.counter';
 const MAP_FILE = '.res-content-id.map.json';
@@ -137,9 +138,7 @@ export class ContentIdAllocator {
   }
 
   private normalizeRelativePath(relativeFilePath: string): string {
-    return relativeFilePath
-      .trim()
-      .replace(/\\/g, '/');
+    return RelativePathHelper.normalizeRelativePath(relativeFilePath.trim());
   }
 
   private bumpCounterIfNeeded(id: string): void {

@@ -117,10 +117,10 @@ channelCmd
   .option('--rate-limit <seconds>', 'rate-limit interval in seconds')
   .option('--refresh-interval <seconds>', 'background refresh interval in seconds')
   .option('--id-field <field>', 'optional field name in fetched item content frontmatter used for deduplication')
-  .option('--duplicate-strategy <strategy>', 'duplicate handling: overwrite | keep both')
+  .option('--duplicate-strategy <strategy>', 'duplicate handling: overwrite | keep-both')
   .action((name: string, opts: ChannelAddCliOptions) => {
     const reservoir = loadReservoir(getGlobalDir());
-    const channel = reservoir.addChannel(buildChannelAddConfig(name, opts));
+    const channel = reservoir.channelController.addChannel(buildChannelAddConfig(name, opts));
     console.log(JSON.stringify(channel, null, 2));
   });
 
@@ -133,12 +133,12 @@ channelCmd
   .option('--rate-limit <seconds>', 'new rate-limit interval in seconds')
   .option('--refresh-interval <seconds>', 'new background refresh interval in seconds')
   .option('--id-field <field>', 'new field name in fetched item content frontmatter used for deduplication')
-  .option('--duplicate-strategy <strategy>', 'new duplicate handling: overwrite | keep both')
+  .option('--duplicate-strategy <strategy>', 'new duplicate handling: overwrite | keep-both')
   .action((id: string, opts: ChannelEditCliOptions) => {
     const reservoir = loadReservoir(getGlobalDir());
-    const existing = reservoir.viewChannel(id);
+    const existing = reservoir.channelController.viewChannel(id);
     const updates = buildChannelEditUpdates(existing.fetchParams, opts);
-    const channel = reservoir.editChannel(id, updates);
+    const channel = reservoir.channelController.editChannel(id, updates);
     console.log(JSON.stringify(channel, null, 2));
   });
 
@@ -146,7 +146,7 @@ channelCmd
   .command('delete <id>')
   .description('Delete a channel and all its content')
   .action((id: string) => {
-    loadReservoir(getGlobalDir()).deleteChannel(id);
+    loadReservoir(getGlobalDir()).channelController.deleteChannel(id);
     console.log(`Deleted channel ${id}`);
   });
 
@@ -154,7 +154,7 @@ channelCmd
   .command('view <id>')
   .description('View channel configuration')
   .action((id: string) => {
-    const channel = loadReservoir(getGlobalDir()).viewChannel(id);
+    const channel = loadReservoir(getGlobalDir()).channelController.viewChannel(id);
     console.log(JSON.stringify(channel, null, 2));
   });
 
@@ -163,7 +163,7 @@ channelCmd
   .description('List all channels')
   .action(() => {
     const reservoir = loadReservoir(getGlobalDir());
-    const channels = reservoir.listChannels();
+    const channels = reservoir.channelController.listChannels();
     const output = channels.map((channel) => ({
       ...channel,
       path: `.res/channels/${channel.id}`,
@@ -218,7 +218,7 @@ retainCmd
   .command('content <id> [lockName]')
   .description('Retain a content item by adding a lock name (defaults to [global])')
   .action((id: string, lockName: string | undefined) => {
-    loadReservoir(getGlobalDir()).retainContent(id, lockName);
+    loadReservoir(getGlobalDir()).lockController.retainContent(id, lockName);
     console.log(`Retained content ${id}${lockName ? ` with lock ${lockName}` : ''}`);
   });
 
@@ -233,7 +233,7 @@ retainCmd
       console.error('Error: Must specify at least --from or --to');
       process.exit(1);
     }
-    const count = loadReservoir(getGlobalDir()).retainContentRange({
+    const count = loadReservoir(getGlobalDir()).lockController.retainContentRange({
       fromId: opts.from,
       toId: opts.to,
       channelId: opts.channel,
@@ -246,7 +246,7 @@ retainCmd
   .command('channel <id> [lockName]')
   .description('Retain a channel by adding a lock applied to newly fetched content')
   .action((id: string, lockName: string | undefined) => {
-    const channel = loadReservoir(getGlobalDir()).retainChannel(id, lockName);
+    const channel = loadReservoir(getGlobalDir()).lockController.retainChannel(id, lockName);
     console.log(JSON.stringify(channel, null, 2));
   });
 
@@ -256,7 +256,7 @@ releaseCmd
   .command('content <id> [lockName]')
   .description('Release a content item lock name (defaults to [global])')
   .action((id: string, lockName: string | undefined) => {
-    loadReservoir(getGlobalDir()).releaseContent(id, lockName);
+    loadReservoir(getGlobalDir()).lockController.releaseContent(id, lockName);
     console.log(`Released content ${id}${lockName ? ` lock ${lockName}` : ''}`);
   });
 
@@ -271,7 +271,7 @@ releaseCmd
       console.error('Error: Must specify at least --from or --to');
       process.exit(1);
     }
-    const count = loadReservoir(getGlobalDir()).releaseContentRange({
+    const count = loadReservoir(getGlobalDir()).lockController.releaseContentRange({
       fromId: opts.from,
       toId: opts.to,
       channelId: opts.channel,
@@ -284,7 +284,7 @@ releaseCmd
   .command('channel <id> [lockName]')
   .description('Release a channel lock that applies to newly fetched content')
   .action((id: string, lockName: string | undefined) => {
-    const channel = loadReservoir(getGlobalDir()).releaseChannel(id, lockName);
+    const channel = loadReservoir(getGlobalDir()).lockController.releaseChannel(id, lockName);
     console.log(JSON.stringify(channel, null, 2));
   });
 
@@ -318,14 +318,19 @@ contentCmd
       ? opts.channels.split(',').map((s) => s.trim()).filter((s) => s.length > 0)
       : undefined;
 
-    const items = loadReservoir(getGlobalDir()).listContent({
+    const items = loadReservoir(getGlobalDir()).contentController.listContent({
       channelIds,
       retained,
       retainedBy,
       pageSize,
       pageOffset,
     });
-    const output = items.map(({ content, ...item }) => item);
+    const output = items.map(({ content, title, ...item }) => {
+      if (title === undefined) {
+        return item;
+      }
+      return { ...item, title };
+    });
     console.log(JSON.stringify(output, null, 2));
   });
 
@@ -335,7 +340,7 @@ program
   .command('clean')
   .description('Delete content beyond the configured max size')
   .action(() => {
-    loadReservoir(getGlobalDir()).clean();
+    loadReservoir(getGlobalDir()).evictionController.clean();
     console.log('Clean complete');
   });
 

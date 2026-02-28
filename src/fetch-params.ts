@@ -1,4 +1,4 @@
-function normalizeStoredFetchParams(fetchParams: Record<string, string> | undefined): Record<string, string> {
+export function normalizeFetchParams(fetchParams: Record<string, string> | undefined): Record<string, string> {
   if (!fetchParams || typeof fetchParams !== 'object' || Array.isArray(fetchParams)) return {};
   const out: Record<string, string> = {};
   for (const [rawKey, rawValue] of Object.entries(fetchParams)) {
@@ -70,7 +70,7 @@ export function mergeFetchParamObject(
   existingFetchParams: Record<string, string> | undefined,
   fetchParamPatch?: string,
 ): Record<string, string> {
-  const merged = normalizeStoredFetchParams(existingFetchParams);
+  const merged = normalizeFetchParams(existingFetchParams);
   const patch = parseFetchParamPatch(fetchParamPatch);
   if (!patch) return merged;
 

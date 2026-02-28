@@ -77,7 +77,7 @@ describe('runScheduledFetchTick', () => {
     }
 
     const registered = reservoir.addFetcher(executablePath);
-    const channel = reservoir.addChannel({
+    const channel = reservoir.channelController.addChannel({
       name: 'Custom Scheduled',
       fetchMethod: registered.name,
       refreshInterval: 1,
@@ -87,7 +87,7 @@ describe('runScheduledFetchTick', () => {
     const t0 = new Date('2026-01-01T00:00:00.000Z').getTime();
     await runScheduledFetchTick(reservoir, state, t0);
 
-    const items = reservoir.listContent({ channelIds: [channel.id], retained: false });
+    const items = reservoir.contentController.listContent({ channelIds: [channel.id], retained: false });
     expect(items).toHaveLength(1);
     expect(items[0].content).toContain('# Custom Scheduled Item');
 

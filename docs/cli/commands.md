@@ -12,6 +12,13 @@ All commands support `--help`.
   - For `res init`, omitted `--dir` defaults to the current working directory
   - For all other commands, omitted `--dir` searches from the current working directory upward for the nearest initialized reservoir
 
+## Environment variables
+
+- `RES_LOG_LEVEL`: controls background fetcher logging when running `res start`
+  - Supported values: `error`, `info`, `debug`, `silent`
+  - Default: `info` when unset or invalid
+  - Precedence: `--log-level` overrides `RES_LOG_LEVEL`
+
 ## `init`
 
 Initialize a reservoir directory.
@@ -65,7 +72,7 @@ res channel add <name> --type <type> \
   [--rate-limit <seconds>] \
   [--refresh-interval <seconds>] \
   [--id-field <field>] \
-  [--duplicate-strategy <overwrite|keep both>]
+  [--duplicate-strategy <overwrite|keep-both>]
 ```
 
 Options:
@@ -81,9 +88,9 @@ Options:
 - `--refresh-interval <seconds>`: background refresh interval (default is 24h)
 - `--id-field <field>`: optional fetched-item frontmatter field name used as the per-channel unique content identifier
   - when the field is missing on an item, deduplication falls back to filename
-- `--duplicate-strategy <overwrite|keep both>`: controls how duplicates are handled
+- `--duplicate-strategy <overwrite|keep-both>`: controls how duplicates are handled
   - `overwrite`: replace the existing content item for the same dedupe key
-  - `keep both`: keep both files; duplicate filenames get `-1`, `-2`, etc. suffixes
+  - `keep-both`: preserve multiple files; duplicate filenames get `-1`, `-2`, etc. suffixes
 
 ### `channel edit`
 
@@ -95,7 +102,7 @@ res channel edit <id> \
   [--rate-limit <seconds>] \
   [--refresh-interval <seconds>] \
   [--id-field <field>] \
-  [--duplicate-strategy <overwrite|keep both>]
+  [--duplicate-strategy <overwrite|keep-both>]
 ```
 
 Updates any provided fields on the channel.
@@ -103,7 +110,7 @@ Updates any provided fields on the channel.
 Deduplication fields:
 
 - `--id-field` sets or updates the fetched-item frontmatter field used as the unique identifier
-- `--duplicate-strategy` sets duplicate handling to `overwrite` or `keep both`
+- `--duplicate-strategy` sets duplicate handling to `overwrite` or `keep-both`
 
 `--fetch-param` edits use JSON Merge Patch-like semantics:
 
@@ -149,11 +156,7 @@ Behavior:
 
 - On startup, scans channel directories for untracked markdown files, assigns global IDs, and applies each channel's `retainedLocks` to newly tracked files
 - While running, periodically re-scans before each scheduled tick and also watches `.res/channels/` for filesystem changes to trigger fast re-sync
-- `--log-level` controls all background-fetcher logging:
-  - `error`: only errors
-  - `info` (default): startup + fetch summaries + errors
-  - `debug`: debug logging
-  - `silent`: no background-fetcher logs
+- Logging levels and `RES_LOG_LEVEL` behavior are documented in [Environment variables](#environment-variables)
 
 ### `status`
 
