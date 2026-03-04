@@ -36,5 +36,6 @@ This repository includes GitHub Actions workflows for validation and publishing.
 If publish fails after migrating to trusted publishing:
 
 - `EOTP`: the workflow is still using token-based auth somewhere; ensure publish step does not set `NODE_AUTH_TOKEN`.
+- `Access token expired or revoked` + `E404`: npm is still attempting token auth or trusted publisher is not matched; ensure workflow does not set `NODE_AUTH_TOKEN` and confirm trusted publisher settings exactly match `guthriec/res` and `.github/workflows/publish.yml`.
 - OIDC/trusted publisher errors: re-check npm trusted publisher settings for repository and workflow file path.
 - `E403`: verify the trusted publisher is attached to the correct npm package (`res-md`) and repo (`guthriec/res`).
