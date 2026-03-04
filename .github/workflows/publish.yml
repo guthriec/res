@@ -36,8 +36,5 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Verify trusted publishing identity
-        run: npm whoami
-
       - name: Publish to npm
         run: npm publish --provenance --access public --registry=https://registry.npmjs.org
