@@ -39,3 +39,5 @@ If publish fails after migrating to trusted publishing:
 - `Access token expired or revoked` + `E404`: npm is still attempting token auth or trusted publisher is not matched; ensure workflow does not set `NODE_AUTH_TOKEN` and confirm trusted publisher settings exactly match `guthriec/res` and `.github/workflows/publish.yml`.
 - OIDC/trusted publisher errors: re-check npm trusted publisher settings for repository and workflow file path.
 - `E403`: verify the trusted publisher is attached to the correct npm package (`res-md`) and repo (`guthriec/res`).
+
+The publish workflow now includes a preflight diagnostics step that prints npm auth-related state (`NODE_AUTH_TOKEN`, `NPM_TOKEN`, and auth-related npm config keys) and clears token-based npm auth config immediately before `npm publish`.

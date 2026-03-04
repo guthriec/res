@@ -37,5 +37,21 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Preflight npm auth diagnostics
+        run: |
+          echo "Node version: $(node --version)"
+          echo "npm version: $(npm --version)"
+          echo "registry: $(npm config get registry)"
+          echo "NODE_AUTH_TOKEN is ${NODE_AUTH_TOKEN:+set}${NODE_AUTH_TOKEN:-unset}"
+          echo "NPM_TOKEN is ${NPM_TOKEN:+set}${NPM_TOKEN:-unset}"
+          npm config get //registry.npmjs.org/:_authToken || true
+          npm config list -l | grep -iE 'auth|registry' || true
+
       - name: Publish to npm
-        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ""
+          NPM_TOKEN: ""
+        run: |
+          npm config delete //registry.npmjs.org/:_authToken || true
+          npm config delete _authToken || true
+          npm publish --provenance --access public
