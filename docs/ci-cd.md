@@ -9,6 +9,7 @@ This repository includes GitHub Actions workflows for validation and publishing.
   - Executes `npm ci`, `npm run lint`, `npm test`, and `npm run build`.
 - Publish: `.github/workflows/publish.yml`
   - Runs when pushing tags that start with `v` (for example `v0.1.1`) or via manual `workflow_dispatch`.
+  - Uses npm Trusted Publishing (OIDC), so no `NPM_TOKEN` secret is required.
   - Re-runs lint/tests/build before publishing to npm.
 
 ## Release checklist
@@ -28,15 +29,12 @@ This repository includes GitHub Actions workflows for validation and publishing.
   git push origin v0.1.1
   ```
 
-3. Ensure repository secret `NPM_TOKEN` is configured with publish permissions for `res-md`.
+3. Ensure npm Trusted Publishing is configured for `guthriec/res` and `.github/workflows/publish.yml`.
 
 ## Troubleshooting publish failures
 
-If publish fails with `E403` (`You may not perform that action with these credentials`):
+If publish fails after migrating to trusted publishing:
 
-- Confirm `NPM_TOKEN` exists in the repository secrets and is not empty.
-- Generate a new npm token and replace the secret:
-  - Prefer an npm automation token for CI publishing.
-  - If using a granular token, ensure it has publish/write permissions and allows publishing new packages.
-- Confirm the npm account used to create the token has a verified email.
-- Re-run the workflow; it now includes `npm whoami` before publish to validate token identity.
+- `EOTP`: the workflow is still using token-based auth somewhere; ensure publish step does not set `NODE_AUTH_TOKEN`.
+- OIDC/trusted publisher errors: re-check npm trusted publisher settings for repository and workflow file path.
+- `E403`: verify the trusted publisher is attached to the correct npm package (`res-md`) and repo (`guthriec/res`).
