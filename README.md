@@ -33,7 +33,7 @@ All items are stored within a directory corresponding to its channel of origin.
 
 Each item must have a filename which is unique within its channel, which will also be the name of the item subdirectory containing related static resources.
 
-Outside of the Markdown files, `res` tracks items by a globally unique and increasing-in-time serial number, and stores their fetch time and retention information (see below).
+Internally, `res` tracks items by a globally unique and increasing-in-time serial number, and stores their fetch time and retention information (see below).
 
 The `res content list` command lists content matching the given query.
 
