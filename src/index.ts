@@ -25,3 +25,9 @@ export {
   createBackgroundFetcherState,
   isProcessRunning,
 } from './background-fetcher';
+export {
+  type KitpicksSourceChannelInput,
+  type KitpicksLockedContent,
+  type KitpicksResApi,
+  FakeKitpicksResApi,
+} from './kitpicks-api';
