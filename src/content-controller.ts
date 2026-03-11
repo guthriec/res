@@ -1,25 +1,28 @@
-import { ContentItem } from './types';
-import { ChannelController } from './channel-controller';
-import { ContentParser } from './content-parser';
-import { RelativePathHelper } from './relative-path-helper';
+import { ContentItem } from "./types";
+import { ChannelControllerImpl } from "./channel-controller";
+import { ContentParser } from "./content-parser";
+import { RelativePathHelper } from "./relative-path-helper";
+import type { ContentController } from "./interfaces";
 
-export class ContentController {
+export class ContentControllerImpl implements ContentController {
   private readonly relativePathHelper: RelativePathHelper;
 
   constructor(
-    private readonly channelController: ChannelController,
+    private readonly channelController: ChannelControllerImpl,
     reservoirDir: string,
   ) {
     this.relativePathHelper = new RelativePathHelper(reservoirDir);
   }
 
-  listContent(options: {
-    channelIds?: string[];
-    retained?: boolean;
-    retainedBy?: string[];
-    pageSize?: number;
-    pageOffset?: number;
-  } = {}): ContentItem[] {
+  listContent(
+    options: {
+      channelIds?: string[];
+      retained?: boolean;
+      retainedBy?: string[];
+      pageSize?: number;
+      pageOffset?: number;
+    } = {},
+  ): ContentItem[] {
     const channels = options.channelIds
       ? options.channelIds.map((id) => this.channelController.viewChannel(id))
       : this.channelController.listChannels();
@@ -27,9 +30,10 @@ export class ContentController {
     const normalizedRetainedBy = options.retainedBy
       ?.map((name) => name.trim())
       .filter((name) => name.length > 0);
-    const retainedBySet = normalizedRetainedBy && normalizedRetainedBy.length > 0
-      ? new Set(normalizedRetainedBy)
-      : undefined;
+    const retainedBySet =
+      normalizedRetainedBy && normalizedRetainedBy.length > 0
+        ? new Set(normalizedRetainedBy)
+        : undefined;
     const pageOffset = options.pageOffset ?? 0;
     const pageSize = options.pageSize;
 

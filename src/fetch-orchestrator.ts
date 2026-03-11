@@ -1,16 +1,16 @@
-import * as fs from 'fs';
-import * as path from 'path';
-import { ContentItem, FetchedContent } from './types';
-import { getBuiltinFetcher } from './fetchers';
-import { createCustomFetcher } from './fetchers/custom';
-import { Fetcher } from './fetchers/types';
-import { ContentIdAllocator } from './content-id-allocator';
-import { InputNormalizer } from './input-normalizer';
-import { ContentParser } from './content-parser';
-import { Logger } from './logger';
-import { ChannelController } from './channel-controller';
-import { ContentLockState } from './reservoir-internal-types';
-import { RelativePathHelper } from './relative-path-helper';
+import * as fs from "fs";
+import * as path from "path";
+import { ContentItem, FetchedContent } from "./types";
+import { getBuiltinFetcher } from "./fetchers";
+import { createCustomFetcher } from "./fetchers/custom";
+import { Fetcher } from "./fetchers/types";
+import { ContentIdAllocator } from "./content-id-allocator";
+import { InputNormalizer } from "./input-normalizer";
+import { ContentParser } from "./content-parser";
+import { Logger } from "./logger";
+import { ChannelControllerImpl } from "./channel-controller";
+import { ContentLockState } from "./reservoir-internal-types";
+import { RelativePathHelper } from "./relative-path-helper";
 
 interface ExistingContentEntry {
   filePath: string;
@@ -21,16 +21,16 @@ function contentFileSlug(title: string): string {
   const slug = title
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  return slug || 'content';
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || "content";
 }
 
 interface FetchOrchestratorDependencies {
   reservoirDir: string;
   customFetchersDirectory: string;
   idAllocator: ContentIdAllocator;
-  channelController: ChannelController;
+  channelController: ChannelControllerImpl;
   syncContentTracking: () => Promise<void>;
 }
 
@@ -38,7 +38,7 @@ export class FetchOrchestrator {
   private readonly reservoirDir: string;
   private readonly customFetchersDirectory: string;
   private readonly idAllocator: ContentIdAllocator;
-  private readonly channelController: ChannelController;
+  private readonly channelController: ChannelControllerImpl;
   private readonly syncContentTracking: () => Promise<void>;
   private readonly relativePathHelper: RelativePathHelper;
 
@@ -68,14 +68,19 @@ export class FetchOrchestrator {
     for (const item of fetched) {
       const dedupeKey = this.resolveDedupeKeyForFetchedItem(item, channel.idField);
       const existingEntry = existingByDedupeKey.get(dedupeKey);
-      const shouldOverwrite = channel.duplicateStrategy === 'overwrite' && existingEntry !== undefined;
+      const shouldOverwrite =
+        channel.duplicateStrategy === "overwrite" && existingEntry !== undefined;
 
       let id: string;
       let locks: string[];
       let contentPath: string;
 
       if (shouldOverwrite && existingEntry) {
-        id = existingEntry.contentId ?? await this.idAllocator.assignIdToFile(this.relativePathHelper.toRelativePath(existingEntry.filePath));
+        id =
+          existingEntry.contentId ??
+          (await this.idAllocator.assignIdToFile(
+            this.relativePathHelper.toRelativePath(existingEntry.filePath),
+          ));
         const existingState = metadataById.get(id);
         if (existingState) {
           locks = [...existingState.locks];
@@ -94,8 +99,13 @@ export class FetchOrchestrator {
         }
         contentPath = existingEntry.filePath;
       } else {
-        contentPath = this.createUniqueContentPath(contentRoot, this.contentFileStemForFetchedItem(item));
-        id = await this.idAllocator.assignIdToFile(this.relativePathHelper.toRelativePath(contentPath));
+        contentPath = this.createUniqueContentPath(
+          contentRoot,
+          this.contentFileStemForFetchedItem(item),
+        );
+        id = await this.idAllocator.assignIdToFile(
+          this.relativePathHelper.toRelativePath(contentPath),
+        );
         locks = [...channel.retainedLocks];
         const lockState: ContentLockState = {
           id,
@@ -143,7 +153,9 @@ export class FetchOrchestrator {
     }
     if (persisted.length > 0) {
       this.channelController.saveMetadata(channelId, metadata);
-      logger.debug(`[res sync] [${channelId}] wrote metadata after fetch (${persisted.length} item(s))`);
+      logger.debug(
+        `[res sync] [${channelId}] wrote metadata after fetch (${persisted.length} item(s))`,
+      );
     } else {
       logger.debug(`[res sync] [${channelId}] skipped metadata write after fetch (0 items)`);
     }
@@ -154,7 +166,7 @@ export class FetchOrchestrator {
     if (item.sourceFileName && item.sourceFileName.trim().length > 0) {
       return path.basename(item.sourceFileName, path.extname(item.sourceFileName));
     }
-    return 'content';
+    return "content";
   }
 
   private resolveDedupeKeyForFetchedItem(item: FetchedContent, idField?: string): string {
@@ -169,10 +181,15 @@ export class FetchOrchestrator {
     return this.contentFileStemForFetchedItem(item);
   }
 
-  private buildExistingContentByDedupeKey(channelId: string, idField?: string): Map<string, ExistingContentEntry> {
+  private buildExistingContentByDedupeKey(
+    channelId: string,
+    idField?: string,
+  ): Map<string, ExistingContentEntry> {
     const configuredIdField = InputNormalizer.idField(idField);
     const entries = new Map<string, ExistingContentEntry>();
-    const metadataById = new Map(this.channelController.loadMetadata(channelId).items.map((item) => [item.id, item]));
+    const metadataById = new Map(
+      this.channelController.loadMetadata(channelId).items.map((item) => [item.id, item]),
+    );
     const parsedById = this.channelController.readContentFilesById(channelId);
 
     for (const parsed of parsedById.values()) {
@@ -189,13 +206,13 @@ export class FetchOrchestrator {
       }
       if (!key) {
         const fileName = path.basename(filePath, path.extname(filePath));
-        key = fileName.toLowerCase() === 'content'
-          ? path.basename(path.dirname(filePath))
-          : fileName;
+        key =
+          fileName.toLowerCase() === "content" ? path.basename(path.dirname(filePath)) : fileName;
       }
       const metadataFilePath = contentId ? metadataById.get(contentId)?.filePath : undefined;
-      const resolvedContentId = contentId
-        ?? (metadataFilePath ? this.idAllocator.findIdByFile(metadataFilePath) : undefined);
+      const resolvedContentId =
+        contentId ??
+        (metadataFilePath ? this.idAllocator.findIdByFile(metadataFilePath) : undefined);
       entries.set(key, { filePath, contentId: resolvedContentId });
     }
 
@@ -215,7 +232,10 @@ export class FetchOrchestrator {
   }
 
   private contentResourcesDirectoryForPath(contentPath: string): string {
-    return path.join(path.dirname(contentPath), path.basename(contentPath, path.extname(contentPath)));
+    return path.join(
+      path.dirname(contentPath),
+      path.basename(contentPath, path.extname(contentPath)),
+    );
   }
 
   private resolveFetcher(fetchMethod: string): Fetcher {

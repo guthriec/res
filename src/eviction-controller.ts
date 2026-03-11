@@ -1,14 +1,15 @@
-import * as fs from 'fs';
-import * as path from 'path';
-import { ChannelController } from './channel-controller';
+import * as fs from "fs";
+import * as path from "path";
+import { ChannelControllerImpl } from "./channel-controller";
+import type { EvictionController } from "./interfaces";
 
-const RES_METADATA_DIR = '.res';
+const RES_METADATA_DIR = ".res";
 
-export class EvictionController {
+export class EvictionControllerImpl implements EvictionController {
   constructor(
     private readonly directory: string,
     private readonly getMaxSizeMB: () => number | undefined,
-    private readonly channelController: ChannelController,
+    private readonly channelController: ChannelControllerImpl,
   ) {}
 
   clean(): void {
@@ -19,7 +20,10 @@ export class EvictionController {
       .readdirSync(this.directory, { withFileTypes: true })
       .filter((entry) => entry.name !== RES_METADATA_DIR)
       .map((entry) => path.join(this.directory, entry.name));
-    const currentSize = contentEntries.reduce((total, entryPath) => total + this.getDirSize(entryPath), 0);
+    const currentSize = contentEntries.reduce(
+      (total, entryPath) => total + this.getDirSize(entryPath),
+      0,
+    );
     if (currentSize <= maxBytes) return;
 
     type Candidate = {

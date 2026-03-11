@@ -1,20 +1,20 @@
-import * as fs from 'fs';
-import * as path from 'path';
-import { ContentIdAllocator } from './content-id-allocator';
-import { ChannelController } from './channel-controller';
-import { Logger } from './logger';
-import { RelativePathHelper } from './relative-path-helper';
+import * as fs from "fs";
+import * as path from "path";
+import { ContentIdAllocator } from "./content-id-allocator";
+import { ChannelControllerImpl } from "./channel-controller";
+import { Logger } from "./logger";
+import { RelativePathHelper } from "./relative-path-helper";
 
 interface FilesystemSynchronizerDependencies {
   reservoirDir: string;
   idAllocator: ContentIdAllocator;
-  channelController: ChannelController;
+  channelController: ChannelControllerImpl;
 }
 
 export class FilesystemSynchronizer {
   private readonly reservoirDir: string;
   private readonly idAllocator: ContentIdAllocator;
-  private readonly channelController: ChannelController;
+  private readonly channelController: ChannelControllerImpl;
 
   constructor(deps: FilesystemSynchronizerDependencies) {
     this.reservoirDir = deps.reservoirDir;
@@ -57,7 +57,9 @@ export class FilesystemSynchronizer {
 
       for (const item of metadata.items) {
         const mappedRelativePath = this.idAllocator.getFileForId(item.id);
-        const relativePath = RelativePathHelper.normalizeRelativePath(mappedRelativePath ?? item.filePath ?? '');
+        const relativePath = RelativePathHelper.normalizeRelativePath(
+          mappedRelativePath ?? item.filePath ?? "",
+        );
         if (!relativePath) continue;
         const absolutePath = path.join(this.reservoirDir, relativePath);
         if (!fs.existsSync(absolutePath)) continue;

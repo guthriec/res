@@ -1,11 +1,11 @@
-import * as fs from 'fs';
-import * as path from 'path';
-import { Channel, DEFAULT_REFRESH_INTERVAL_SECONDS } from './types';
-import { Reservoir } from './reservoir';
-import { Logger, type LogLevel } from './logger';
+import * as fs from "fs";
+import * as path from "path";
+import { Channel, DEFAULT_REFRESH_INTERVAL_SECONDS } from "./types";
+import { ReservoirImpl } from "./reservoir";
+import { Logger, type LogLevel } from "./logger";
 
-const FETCHER_PID_FILE = '.res-fetcher.pid';
-const FETCHER_STATUS_FILE = '.res-fetcher-status.json';
+const FETCHER_PID_FILE = ".res-fetcher.pid";
+const FETCHER_STATUS_FILE = ".res-fetcher-status.json";
 
 /**
  * Persisted status payload stored on disk.
@@ -90,14 +90,14 @@ export function isProcessRunning(pid: number): boolean {
 }
 
 function writePidFile(reservoirDir: string, pid: number): void {
-  fs.writeFileSync(getBackgroundFetcherPidPath(reservoirDir), `${pid}\n`, 'utf-8');
+  fs.writeFileSync(getBackgroundFetcherPidPath(reservoirDir), `${pid}\n`, "utf-8");
 }
 
 export function readPidFile(reservoirDir: string): number | null {
   // PID file enables cross-process control: start writes it, status/stop read it.
   const pidPath = getBackgroundFetcherPidPath(reservoirDir);
   if (!fs.existsSync(pidPath)) return null;
-  const parsed = parseInt(fs.readFileSync(pidPath, 'utf-8').trim(), 10);
+  const parsed = parseInt(fs.readFileSync(pidPath, "utf-8").trim(), 10);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
@@ -108,14 +108,23 @@ function clearPidFile(reservoirDir: string): void {
   }
 }
 
-export function readBackgroundFetcherStatusFile(reservoirDir: string): BackgroundFetcherStatus | null {
+export function readBackgroundFetcherStatusFile(
+  reservoirDir: string,
+): BackgroundFetcherStatus | null {
   const statusPath = getBackgroundFetcherStatusPath(reservoirDir);
   if (!fs.existsSync(statusPath)) return null;
-  return JSON.parse(fs.readFileSync(statusPath, 'utf-8')) as BackgroundFetcherStatus;
+  return JSON.parse(fs.readFileSync(statusPath, "utf-8")) as BackgroundFetcherStatus;
 }
 
-function writeBackgroundFetcherStatusFile(reservoirDir: string, status: BackgroundFetcherStatus): void {
-  fs.writeFileSync(getBackgroundFetcherStatusPath(reservoirDir), JSON.stringify(status, null, 2), 'utf-8');
+function writeBackgroundFetcherStatusFile(
+  reservoirDir: string,
+  status: BackgroundFetcherStatus,
+): void {
+  fs.writeFileSync(
+    getBackgroundFetcherStatusPath(reservoirDir),
+    JSON.stringify(status, null, 2),
+    "utf-8",
+  );
 }
 
 export function getBackgroundFetcherStatus(reservoirDir: string): BackgroundFetcherProcessStatus {
@@ -139,7 +148,11 @@ export function getBackgroundFetcherStatus(reservoirDir: string): BackgroundFetc
   };
 }
 
-function ensureStartable(reservoirDir: string): { canStart: boolean; message?: string; pid?: number } {
+function ensureStartable(reservoirDir: string): {
+  canStart: boolean;
+  message?: string;
+  pid?: number;
+} {
   const absDir = path.resolve(reservoirDir);
   const currentStatus = getBackgroundFetcherStatus(absDir);
   if (currentStatus.running && currentStatus.pid) {
@@ -152,19 +165,23 @@ function ensureStartable(reservoirDir: string): { canStart: boolean; message?: s
   return { canStart: true };
 }
 
-export function stopBackgroundFetcher(reservoirDir: string): { stopped: boolean; message: string; pid?: number } {
+export function stopBackgroundFetcher(reservoirDir: string): {
+  stopped: boolean;
+  message: string;
+  pid?: number;
+} {
   const absDir = path.resolve(reservoirDir);
   const pid = readPidFile(absDir);
   if (!pid) {
-    return { stopped: false, message: 'Background fetcher is not running' };
+    return { stopped: false, message: "Background fetcher is not running" };
   }
 
   if (!isProcessRunning(pid)) {
     clearPidFile(absDir);
-    return { stopped: false, message: 'Background fetcher is not running' };
+    return { stopped: false, message: "Background fetcher is not running" };
   }
 
-  process.kill(pid, 'SIGTERM');
+  process.kill(pid, "SIGTERM");
   clearPidFile(absDir);
   return { stopped: true, pid, message: `Stopped background fetcher (pid ${pid})` };
 }
@@ -180,7 +197,7 @@ export async function startBackgroundFetcher(
   const absDir = path.resolve(reservoirDir);
   const startable = ensureStartable(absDir);
   if (!startable.canStart) {
-    throw new Error(startable.message ?? 'Background fetcher already running');
+    throw new Error(startable.message ?? "Background fetcher already running");
   }
 
   writePidFile(absDir, process.pid);
@@ -190,12 +207,10 @@ export async function startBackgroundFetcher(
 }
 
 function channelPollInterval(channel: Channel): number {
-  const refreshInterval = channel.refreshInterval > 0
-    ? channel.refreshInterval
-    : DEFAULT_REFRESH_INTERVAL_SECONDS;
-  const rateLimit = channel.rateLimitInterval && channel.rateLimitInterval > 0
-    ? channel.rateLimitInterval
-    : 0;
+  const refreshInterval =
+    channel.refreshInterval > 0 ? channel.refreshInterval : DEFAULT_REFRESH_INTERVAL_SECONDS;
+  const rateLimit =
+    channel.rateLimitInterval && channel.rateLimitInterval > 0 ? channel.rateLimitInterval : 0;
   return Math.max(refreshInterval, rateLimit);
 }
 
@@ -208,7 +223,7 @@ export async function runScheduledFetchTick(
     onFetchError?: (channelId: string, message: string) => void;
   } = {},
 ): Promise<void> {
-  if (typeof reservoir.syncContentTracking === 'function') {
+  if (typeof reservoir.syncContentTracking === "function") {
     await reservoir.syncContentTracking();
   }
 
@@ -264,12 +279,12 @@ export async function runBackgroundFetcherLoop(
     out: options.logger ?? ((message: string): void => console.log(message)),
     err: options.errorLogger ?? ((message: string): void => console.error(message)),
   });
-  const emit = (eventLevel: Exclude<LogLevel, 'silent'>, message: string): void => {
-    if (eventLevel === 'error') {
+  const emit = (eventLevel: Exclude<LogLevel, "silent">, message: string): void => {
+    if (eventLevel === "error") {
       logger.error(message);
       return;
     }
-    if (eventLevel === 'debug') {
+    if (eventLevel === "debug") {
       logger.debug(message);
       return;
     }
@@ -278,7 +293,7 @@ export async function runBackgroundFetcherLoop(
 
   process.env.RES_LOG_LEVEL = activeLogLevel;
 
-  const reservoir = Reservoir.load(absDir);
+  const reservoir = ReservoirImpl.load(absDir);
   await reservoir.syncContentTracking();
 
   const existing = readBackgroundFetcherStatusFile(absDir);
@@ -307,12 +322,12 @@ export async function runBackgroundFetcherLoop(
     pendingResync = setTimeout(() => {
       void reservoir.syncContentTracking().catch((err: unknown) => {
         const message = err instanceof Error ? err.message : String(err);
-        emit('error', `[sync] failed: ${message}`);
+        emit("error", `[sync] failed: ${message}`);
       });
     }, 250);
   };
 
-  const channelsDir = path.join(absDir, '.res', 'channels');
+  const channelsDir = path.join(absDir, ".res", "channels");
   if (fs.existsSync(channelsDir)) {
     try {
       channelsWatcher = fs.watch(channelsDir, { recursive: true }, () => {
@@ -337,20 +352,20 @@ export async function runBackgroundFetcherLoop(
     process.exit(0);
   };
 
-  process.on('SIGTERM', shutdown);
-  process.on('SIGINT', shutdown);
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
 
   persist();
-  emit('info', `Background fetcher started (pid ${process.pid})`);
+  emit("info", `Background fetcher started (pid ${process.pid})`);
 
   while (true) {
     await runScheduledFetchTick(reservoir, state, Date.now(), {
       onFetchSuccess: (channelId, itemCount) => {
-        const suffix = itemCount === null ? '' : ` (${itemCount} item(s))`;
-        emit('info', `[${channelId}] fetched${suffix}`);
+        const suffix = itemCount === null ? "" : ` (${itemCount} item(s))`;
+        emit("info", `[${channelId}] fetched${suffix}`);
       },
       onFetchError: (channelId, message) => {
-        emit('error', `[${channelId}] fetch failed: ${message}`);
+        emit("error", `[${channelId}] fetch failed: ${message}`);
       },
     });
     persist();

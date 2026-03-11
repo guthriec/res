@@ -1,13 +1,14 @@
-import * as fs from 'fs';
-import * as path from 'path';
-import { Channel } from './types';
-import { InputNormalizer } from './input-normalizer';
-import { ChannelController } from './channel-controller';
+import * as fs from "fs";
+import * as path from "path";
+import { Channel } from "./types";
+import { InputNormalizer } from "./input-normalizer";
+import { ChannelControllerImpl } from "./channel-controller";
+import type { LockController } from "./interfaces";
 
-const CHANNEL_CONFIG_FILE = 'channel.json';
+const CHANNEL_CONFIG_FILE = "channel.json";
 
-export class LockController {
-  constructor(private readonly channelController: ChannelController) {}
+export class LockControllerImpl implements LockController {
+  constructor(private readonly channelController: ChannelControllerImpl) {}
 
   retainContent(contentId: string, lockName?: string): void {
     this.updateContentLock(contentId, InputNormalizer.lockName(lockName), true);
@@ -99,12 +100,13 @@ export class LockController {
 
     if (fromId && isNaN(fromIdNum)) throw new Error(`Invalid start ID: ${fromId}`);
     if (toId && isNaN(toIdNum)) throw new Error(`Invalid end ID: ${toId}`);
-    if (fromIdNum > toIdNum) throw new Error(`Invalid range: fromId (${fromId}) comes after toId (${toId})`);
+    if (fromIdNum > toIdNum)
+      throw new Error(`Invalid range: fromId (${fromId}) comes after toId (${toId})`);
 
     let foundFrom = !fromId;
     let foundTo = !toId;
     let count = 0;
-    const metaByChannel = new Map<string, ReturnType<ChannelController['loadMetadata']>>();
+    const metaByChannel = new Map<string, ReturnType<ChannelControllerImpl["loadMetadata"]>>();
 
     for (const channel of channels) {
       if (!metaByChannel.has(channel.id)) {

@@ -1,33 +1,34 @@
-import * as fs from 'fs';
-import * as path from 'path';
+import * as fs from "fs";
+import * as path from "path";
 import {
   ChannelConfig,
   Channel,
   ContentMetadata,
   DEFAULT_REFRESH_INTERVAL_SECONDS,
   GLOBAL_LOCK_NAME,
-} from './types';
-import { ContentIdAllocator } from './content-id-allocator';
-import { normalizeFetchParams } from './fetch-params';
-import { InputNormalizer } from './input-normalizer';
-import { ContentLockState, ParsedContentFile } from './reservoir-internal-types';
-import { RelativePathHelper } from './relative-path-helper';
+} from "./types";
+import { ContentIdAllocator } from "./content-id-allocator";
+import { normalizeFetchParams } from "./fetch-params";
+import { InputNormalizer } from "./input-normalizer";
+import { ContentLockState, ParsedContentFile } from "./reservoir-internal-types";
+import { RelativePathHelper } from "./relative-path-helper";
+import type { ChannelController } from "./interfaces";
 
-const RES_METADATA_DIR = '.res';
-const CHANNELS_DIR = 'channels';
-const CHANNEL_CONFIG_FILE = 'channel.json';
-const CHANNEL_METADATA_FILE = 'metadata.json';
+const RES_METADATA_DIR = ".res";
+const CHANNELS_DIR = "channels";
+const CHANNEL_CONFIG_FILE = "channel.json";
+const CHANNEL_METADATA_FILE = "metadata.json";
 
 function channelDirectorySlug(name: string): string {
   const slug = name
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  return slug || 'channel';
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return slug || "channel";
 }
 
-export class ChannelController {
+export class ChannelControllerImpl implements ChannelController {
   private readonly idAllocator: ContentIdAllocator;
 
   constructor(private readonly directory: string) {
@@ -38,12 +39,12 @@ export class ChannelController {
     const metaPath = path.join(this.resolveChannelDir(channelId), CHANNEL_METADATA_FILE);
     if (!fs.existsSync(metaPath)) return { items: [] };
 
-    const raw = JSON.parse(fs.readFileSync(metaPath, 'utf-8')) as {
+    const raw = JSON.parse(fs.readFileSync(metaPath, "utf-8")) as {
       items?: Array<
-        ContentMetadata |
-        (ContentLockState & { read?: boolean; fileName?: string }) |
-        { id: string; read: boolean }
-      >
+        | ContentMetadata
+        | (ContentLockState & { read?: boolean; fileName?: string })
+        | { id: string; read: boolean }
+      >;
     };
     const items = Array.isArray(raw.items) ? raw.items : [];
 
@@ -51,23 +52,27 @@ export class ChannelController {
     let needsWrite = false;
 
     for (const item of items) {
-      if (!item || typeof item !== 'object' || !('id' in item) || typeof item.id !== 'string') {
+      if (!item || typeof item !== "object" || !("id" in item) || typeof item.id !== "string") {
         needsWrite = true;
         continue;
       }
 
-      if ('locks' in item && Array.isArray(item.locks)) {
+      if ("locks" in item && Array.isArray(item.locks)) {
         const locks = InputNormalizer.locks(item.locks);
         const entry = item as ContentLockState & { fileName?: string };
-        const fetchedAt = typeof entry.fetchedAt === 'string' && entry.fetchedAt.trim().length > 0
-          ? entry.fetchedAt
-          : new Date().toISOString();
-        const filePathRaw = typeof entry.filePath === 'string'
-          ? entry.filePath
-          : typeof entry.fileName === 'string'
-            ? `${entry.fileName.replace(/\.md$/i, '')}.md`
-            : undefined;
-        const filePath = filePathRaw ? RelativePathHelper.normalizeRelativePath(filePathRaw) : undefined;
+        const fetchedAt =
+          typeof entry.fetchedAt === "string" && entry.fetchedAt.trim().length > 0
+            ? entry.fetchedAt
+            : new Date().toISOString();
+        const filePathRaw =
+          typeof entry.filePath === "string"
+            ? entry.filePath
+            : typeof entry.fileName === "string"
+              ? `${entry.fileName.replace(/\.md$/i, "")}.md`
+              : undefined;
+        const filePath = filePathRaw
+          ? RelativePathHelper.normalizeRelativePath(filePathRaw)
+          : undefined;
 
         lockStateItems.push({
           id: item.id,
@@ -84,7 +89,7 @@ export class ChannelController {
         continue;
       }
 
-      if ('read' in item && typeof item.read === 'boolean') {
+      if ("read" in item && typeof item.read === "boolean") {
         const locks = item.read ? [] : [GLOBAL_LOCK_NAME];
         lockStateItems.push({
           id: item.id,
@@ -138,8 +143,8 @@ export class ChannelController {
       if (!candidate) continue;
       const normalized = RelativePathHelper.normalizeRelativePath(candidate);
       const absolutePath = path.join(this.directory, normalized);
-      if (!fs.existsSync(absolutePath) || !absolutePath.toLowerCase().endsWith('.md')) continue;
-      const raw = fs.readFileSync(absolutePath, 'utf-8');
+      if (!fs.existsSync(absolutePath) || !absolutePath.toLowerCase().endsWith(".md")) continue;
+      const raw = fs.readFileSync(absolutePath, "utf-8");
       parsedById.set(state.id, {
         id: state.id,
         content: raw,
@@ -168,7 +173,7 @@ export class ChannelController {
     const directConfigPath = path.join(directPath, CHANNEL_CONFIG_FILE);
     if (fs.existsSync(directConfigPath)) {
       try {
-        const channel = JSON.parse(fs.readFileSync(directConfigPath, 'utf-8')) as Channel;
+        const channel = JSON.parse(fs.readFileSync(directConfigPath, "utf-8")) as Channel;
         if (channel.id === channelId) {
           return directPath;
         }
@@ -184,7 +189,7 @@ export class ChannelController {
       const configPath = path.join(candidateDir, CHANNEL_CONFIG_FILE);
       if (!fs.existsSync(configPath)) continue;
       try {
-        const channel = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Channel;
+        const channel = JSON.parse(fs.readFileSync(configPath, "utf-8")) as Channel;
         if (channel.id === channelId) {
           return candidateDir;
         }
@@ -223,7 +228,10 @@ export class ChannelController {
     const channelDir = path.join(channelsDir, channelDirName);
     fs.mkdirSync(channelDir, { recursive: true });
     fs.writeFileSync(path.join(channelDir, CHANNEL_CONFIG_FILE), JSON.stringify(channel, null, 2));
-    fs.writeFileSync(path.join(channelDir, CHANNEL_METADATA_FILE), JSON.stringify({ items: [] }, null, 2));
+    fs.writeFileSync(
+      path.join(channelDir, CHANNEL_METADATA_FILE),
+      JSON.stringify({ items: [] }, null, 2),
+    );
     return channel;
   }
 
@@ -234,10 +242,14 @@ export class ChannelController {
       normalizedUpdates.idField = InputNormalizer.idField(updates.idField);
     }
     if (updates.duplicateStrategy !== undefined) {
-      normalizedUpdates.duplicateStrategy = InputNormalizer.duplicateStrategy(updates.duplicateStrategy);
+      normalizedUpdates.duplicateStrategy = InputNormalizer.duplicateStrategy(
+        updates.duplicateStrategy,
+      );
     }
     if (updates.retainedLocks !== undefined) {
-      normalizedUpdates.retainedLocks = InputNormalizer.locks(updates.retainedLocks, { validateNames: true });
+      normalizedUpdates.retainedLocks = InputNormalizer.locks(updates.retainedLocks, {
+        validateNames: true,
+      });
     }
     const updated: Channel = InputNormalizer.channel({ ...existing, ...normalizedUpdates });
     const channelDir = this.resolveChannelDir(channelId);
@@ -252,9 +264,14 @@ export class ChannelController {
 
   viewChannel(channelId: string): Channel {
     const configPath = path.join(this.resolveChannelDir(channelId), CHANNEL_CONFIG_FILE);
-    const rawChannel = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Channel & { fetchArgs?: Record<string, string> };
+    const rawChannel = JSON.parse(fs.readFileSync(configPath, "utf-8")) as Channel & {
+      fetchArgs?: Record<string, string>;
+    };
     const channel = InputNormalizer.channel(rawChannel);
-    if (rawChannel.refreshInterval !== channel.refreshInterval || rawChannel.fetchArgs !== undefined) {
+    if (
+      rawChannel.refreshInterval !== channel.refreshInterval ||
+      rawChannel.fetchArgs !== undefined
+    ) {
       fs.writeFileSync(configPath, JSON.stringify(channel, null, 2));
     }
     return channel;
@@ -270,9 +287,14 @@ export class ChannelController {
         try {
           const configPath = path.join(channelsDir, e.name, CHANNEL_CONFIG_FILE);
           if (!fs.existsSync(configPath)) return [];
-          const rawChannel = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Channel & { fetchArgs?: Record<string, string> };
+          const rawChannel = JSON.parse(fs.readFileSync(configPath, "utf-8")) as Channel & {
+            fetchArgs?: Record<string, string>;
+          };
           const channel = InputNormalizer.channel(rawChannel);
-          if (rawChannel.refreshInterval !== channel.refreshInterval || rawChannel.fetchArgs !== undefined) {
+          if (
+            rawChannel.refreshInterval !== channel.refreshInterval ||
+            rawChannel.fetchArgs !== undefined
+          ) {
             fs.writeFileSync(configPath, JSON.stringify(channel, null, 2));
           }
           return [channel];

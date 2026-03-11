@@ -1,4 +1,12 @@
-export { Reservoir } from './reservoir';
+export { ReservoirImpl } from "./reservoir";
+export type {
+  Reservoir,
+  ChannelController,
+  ContentController,
+  LockController,
+  EvictionController,
+} from "./interfaces";
+export { ReservoirFake } from "./testing/fake-reservoir";
 export {
   FetchMethod,
   GLOBAL_LOCK_NAME,
@@ -10,12 +18,12 @@ export {
   type ContentMetadata,
   type ContentItem,
   type FetchedContent,
-} from './types';
-export { ContentIdAllocator } from './content-id-allocator';
-export { fetchRSS } from './fetchers/rss';
-export { fetchWebPage } from './fetchers/webpage';
-export { fetchCustom } from './fetchers/custom';
-export type { Fetcher, FetchParams } from './fetchers/types';
+} from "./types";
+export { ContentIdAllocator } from "./content-id-allocator";
+export { fetchRSS } from "./fetchers/rss";
+export { fetchWebPage } from "./fetchers/webpage";
+export { fetchCustom } from "./fetchers/custom";
+export type { Fetcher, FetchParams } from "./fetchers/types";
 export {
   getBackgroundFetcherStatus,
   startBackgroundFetcher,
@@ -24,4 +32,4 @@ export {
   runScheduledFetchTick,
   createBackgroundFetcherState,
   isProcessRunning,
-} from './background-fetcher';
+} from "./background-fetcher";

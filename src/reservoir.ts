@@ -1,31 +1,28 @@
-import * as fs from 'fs';
-import * as path from 'path';
-import {
-  ReservoirConfig,
-  ContentItem,
-} from './types';
-import { ContentIdAllocator } from './content-id-allocator';
-import { resolveCustomFetchersDirectory } from './custom-fetcher-config-util';
-import { ContentLockState } from './reservoir-internal-types';
-import { ChannelController } from './channel-controller';
-import { ContentController } from './content-controller';
-import { LockController } from './lock-controller';
-import { EvictionController } from './eviction-controller';
-import { FetchOrchestrator } from './fetch-orchestrator';
-import { FilesystemSynchronizer } from './filesystem-synchronizer';
+import * as fs from "fs";
+import * as path from "path";
+import { ReservoirConfig, ContentItem } from "./types";
+import { ContentIdAllocator } from "./content-id-allocator";
+import { resolveCustomFetchersDirectory } from "./custom-fetcher-config-util";
+import { ChannelControllerImpl } from "./channel-controller";
+import { ContentControllerImpl } from "./content-controller";
+import { LockControllerImpl } from "./lock-controller";
+import { EvictionControllerImpl } from "./eviction-controller";
+import { FetchOrchestrator } from "./fetch-orchestrator";
+import { FilesystemSynchronizer } from "./filesystem-synchronizer";
+import type { Reservoir } from "./interfaces";
 
-const CONFIG_FILE = '.res-config.json';
-const RES_METADATA_DIR = '.res';
-const CHANNELS_DIR = 'channels';
+const CONFIG_FILE = ".res-config.json";
+const RES_METADATA_DIR = ".res";
+const CHANNELS_DIR = "channels";
 
-export class Reservoir {
+export class ReservoirImpl implements Reservoir {
   private readonly dir: string;
   private config: ReservoirConfig;
   private readonly idAllocator: ContentIdAllocator;
-  public readonly channelController: ChannelController;
-  public readonly contentController: ContentController;
-  public readonly lockController: LockController;
-  public readonly evictionController: EvictionController;
+  public readonly channelController: ChannelControllerImpl;
+  public readonly contentController: ContentControllerImpl;
+  public readonly lockController: LockControllerImpl;
+  public readonly evictionController: EvictionControllerImpl;
   private readonly fetchOrchestrator: FetchOrchestrator;
   private readonly filesystemSynchronizer: FilesystemSynchronizer;
 
@@ -33,13 +30,10 @@ export class Reservoir {
     this.dir = dir;
     this.config = config;
     this.idAllocator = ContentIdAllocator.forReservoir(dir);
-    this.channelController = new ChannelController(this.dir);
-    this.contentController = new ContentController(
-      this.channelController,
-      this.dir,
-    );
-    this.lockController = new LockController(this.channelController);
-    this.evictionController = new EvictionController(
+    this.channelController = new ChannelControllerImpl(this.dir);
+    this.contentController = new ContentControllerImpl(this.channelController, this.dir);
+    this.lockController = new LockControllerImpl(this.channelController);
+    this.evictionController = new EvictionControllerImpl(
       this.dir,
       () => this.config.maxSizeMB,
       this.channelController,
@@ -62,7 +56,7 @@ export class Reservoir {
    * Initialize a new reservoir at the given directory.
    * Creates the directory if it doesn't exist.
    */
-  static initialize(dir: string, options: { maxSizeMB?: number } = {}): Reservoir {
+  static initialize(dir: string, options: { maxSizeMB?: number } = {}): ReservoirImpl {
     const absDir = path.resolve(dir);
     if (!fs.existsSync(absDir)) {
       fs.mkdirSync(absDir, { recursive: true });
@@ -73,33 +67,35 @@ export class Reservoir {
     }
     fs.writeFileSync(path.join(absDir, CONFIG_FILE), JSON.stringify(config, null, 2));
     fs.mkdirSync(path.join(absDir, RES_METADATA_DIR, CHANNELS_DIR), { recursive: true });
-    return new Reservoir(absDir, config);
+    return new ReservoirImpl(absDir, config);
   }
 
   /**
    * Load an existing reservoir from the given directory.
    */
-  static load(dir: string): Reservoir {
+  static load(dir: string): ReservoirImpl {
     const absDir = path.resolve(dir);
     const configPath = path.join(absDir, CONFIG_FILE);
     if (!fs.existsSync(configPath)) {
       throw new Error(`No reservoir found at ${absDir}. Run 'res init' first.`);
     }
-    const config = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as ReservoirConfig;
-    return new Reservoir(absDir, config);
+    const config = JSON.parse(fs.readFileSync(configPath, "utf-8")) as ReservoirConfig;
+    return new ReservoirImpl(absDir, config);
   }
 
   /**
    * Find and load the nearest initialized reservoir by searching the given directory
    * and its parent directories.
    */
-  static loadNearest(startDir: string = process.cwd()): Reservoir {
-    const nearestDir = Reservoir.findNearestDirectory(startDir);
+  static loadNearest(startDir: string = process.cwd()): ReservoirImpl {
+    const nearestDir = ReservoirImpl.findNearestDirectory(startDir);
     if (!nearestDir) {
       const absStart = path.resolve(startDir);
-      throw new Error(`No reservoir found from ${absStart} upward. Run 'res init' in this directory or pass --dir <path>.`);
+      throw new Error(
+        `No reservoir found from ${absStart} upward. Run 'res init' in this directory or pass --dir <path>.`,
+      );
     }
-    return Reservoir.load(nearestDir);
+    return ReservoirImpl.load(nearestDir);
   }
 
   private static findNearestDirectory(startDir: string): string | null {
@@ -193,5 +189,4 @@ export class Reservoir {
   async syncContentTracking(): Promise<void> {
     await this.filesystemSynchronizer.syncContentTracking();
   }
-
 }
