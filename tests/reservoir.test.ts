@@ -135,29 +135,29 @@ function contentPathForId(channelId: string, contentId: string): string | null {
 // ─── initialize ──────────────────────────────────────────────────────────────
 
 describe("Reservoir.initialize", () => {
-  it("creates the reservoir config file", () => {
+  it("creates the reservoir config file", async () => {
     Reservoir.initialize(tmpDir);
     expect(fs.existsSync(path.join(tmpDir, ".res-config.json"))).toBe(true);
   });
 
-  it("creates channels directory", () => {
+  it("creates channels directory", async () => {
     Reservoir.initialize(tmpDir);
     expect(fs.existsSync(path.join(tmpDir, ".res", "channels"))).toBe(true);
   });
 
-  it("stores maxSizeMB in config", () => {
+  it("stores maxSizeMB in config", async () => {
     Reservoir.initialize(tmpDir, { maxSizeMB: 10 });
     const config = JSON.parse(fs.readFileSync(path.join(tmpDir, ".res-config.json"), "utf-8"));
     expect(config.maxSizeMB).toBe(10);
   });
 
-  it("creates directory if it does not exist", () => {
+  it("creates directory if it does not exist", async () => {
     const newDir = path.join(tmpDir, "new-reservoir");
     Reservoir.initialize(newDir);
     expect(fs.existsSync(newDir)).toBe(true);
   });
 
-  it("exposes directory and config getters", () => {
+  it("exposes directory and config getters", async () => {
     const res = Reservoir.initialize(tmpDir, { maxSizeMB: 5 });
     expect(res.directory).toBe(tmpDir);
     expect(res.reservoirConfig).toEqual({ maxSizeMB: 5 });
@@ -167,19 +167,19 @@ describe("Reservoir.initialize", () => {
 // ─── load ────────────────────────────────────────────────────────────────────
 
 describe("Reservoir.load", () => {
-  it("loads an existing reservoir", () => {
+  it("loads an existing reservoir", async () => {
     Reservoir.initialize(tmpDir, { maxSizeMB: 3 });
     const loaded = Reservoir.load(tmpDir);
     expect(loaded.reservoirConfig).toEqual({ maxSizeMB: 3 });
   });
 
-  it("throws for non-existent reservoir", () => {
+  it("throws for non-existent reservoir", async () => {
     expect(() => Reservoir.load(path.join(tmpDir, "nonexistent"))).toThrow("Run 'res init' first");
   });
 });
 
 describe("Reservoir.loadNearest", () => {
-  it("loads nearest reservoir from a nested child directory", () => {
+  it("loads nearest reservoir from a nested child directory", async () => {
     Reservoir.initialize(tmpDir, { maxSizeMB: 7 });
     const nestedDir = path.join(tmpDir, "a", "b", "c");
     fs.mkdirSync(nestedDir, { recursive: true });
@@ -189,7 +189,7 @@ describe("Reservoir.loadNearest", () => {
     expect(loaded.reservoirConfig).toEqual({ maxSizeMB: 7 });
   });
 
-  it("throws when no initialized reservoir exists in parent chain", () => {
+  it("throws when no initialized reservoir exists in parent chain", async () => {
     const startDir = path.join(tmpDir, "x", "y");
     fs.mkdirSync(startDir, { recursive: true });
     expect(() => Reservoir.loadNearest(startDir)).toThrow("No reservoir found from");
@@ -197,10 +197,10 @@ describe("Reservoir.loadNearest", () => {
 });
 
 describe("setMaxSizeMB", () => {
-  it("updates config in memory and on disk", () => {
+  it("updates config in memory and on disk", async () => {
     const res = makeReservoir({ maxSizeMB: 10 });
 
-    const updated = res.setMaxSizeMB(5);
+    const updated = await res.setMaxSizeMB(5);
 
     expect(updated).toEqual({ maxSizeMB: 5 });
     expect(res.reservoirConfig).toEqual({ maxSizeMB: 5 });
@@ -209,9 +209,9 @@ describe("setMaxSizeMB", () => {
     expect(config).toEqual({ maxSizeMB: 5 });
   });
 
-  it("triggers clean when max size decreases", () => {
+  it("triggers clean when max size decreases", async () => {
     const res = makeReservoir({ maxSizeMB: 1 });
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "C",
       fetchMethod: FetchMethod.RSS,
       url: "u",
@@ -223,14 +223,14 @@ describe("setMaxSizeMB", () => {
     addTestItem(res, ch.id, { id: "new1", fetchedAt: t2, locks: [], content: "x".repeat(2000) });
     expect(contentPathForId(ch.id, "old1")).not.toBeNull();
 
-    res.setMaxSizeMB(0.000001);
+    await res.setMaxSizeMB(0.000001);
 
     expect(contentPathForId(ch.id, "old1")).toBeNull();
   });
 
-  it("does not trigger clean when max size increases", () => {
+  it("does not trigger clean when max size increases", async () => {
     const res = makeReservoir({ maxSizeMB: 0.000001 });
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "C",
       fetchMethod: FetchMethod.RSS,
       url: "u",
@@ -239,7 +239,7 @@ describe("setMaxSizeMB", () => {
     addTestItem(res, ch.id, { id: "keep1", locks: [], content: "x".repeat(5000) });
     expect(contentPathForId(ch.id, "keep1")).not.toBeNull();
 
-    res.setMaxSizeMB(10);
+    await res.setMaxSizeMB(10);
 
     expect(contentPathForId(ch.id, "keep1")).not.toBeNull();
   });
@@ -248,9 +248,9 @@ describe("setMaxSizeMB", () => {
 // ─── addChannel ──────────────────────────────────────────────────────────────
 
 describe("addChannel", () => {
-  it("returns a channel with id and createdAt", () => {
+  it("returns a channel with id and createdAt", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "Test",
       fetchMethod: FetchMethod.RSS,
       url: "https://example.com/feed",
@@ -263,9 +263,9 @@ describe("addChannel", () => {
     expect(ch.retainedLocks).toEqual([]);
   });
 
-  it("creates channel directory with config and metadata", () => {
+  it("creates channel directory with config and metadata", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "Test",
       fetchMethod: FetchMethod.WebPage,
       url: "https://example.com",
@@ -275,9 +275,9 @@ describe("addChannel", () => {
     expect(fs.existsSync(path.join(channelDir, "metadata.json"))).toBe(true);
   });
 
-  it("names channel directory from channel name", () => {
+  it("names channel directory from channel name", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "My New Feed",
       fetchMethod: FetchMethod.RSS,
       url: "https://example.com/feed",
@@ -287,14 +287,14 @@ describe("addChannel", () => {
     expect(ch.id).toBe("my-new-feed");
   });
 
-  it("adds numeric suffix to both channel directory and id when slug collides", () => {
+  it("adds numeric suffix to both channel directory and id when slug collides", async () => {
     const res = makeReservoir();
-    const first = res.channelController.addChannel({
+    const first = await res.channelController.addChannel({
       name: "Same Name",
       fetchMethod: FetchMethod.RSS,
       url: "https://example.com/one",
     });
-    const second = res.channelController.addChannel({
+    const second = await res.channelController.addChannel({
       name: "Same Name",
       fetchMethod: FetchMethod.RSS,
       url: "https://example.com/two",
@@ -305,15 +305,16 @@ describe("addChannel", () => {
     expect(path.basename(channelDirForId(second.id))).toBe("same-name-2");
   });
 
-  it("rejects retainedLocks with comma-separated names in addChannel", () => {
+  it("rejects retainedLocks with comma-separated names in addChannel", async () => {
     const res = makeReservoir();
-    expect(() =>
-      res.channelController.addChannel({
-        name: "Bad Locks",
-        fetchMethod: FetchMethod.RSS,
-        url: "u",
-        retainedLocks: ["bad,name"],
-      }),
+    expect(
+      () =>
+        await res.channelController.addChannel({
+          name: "Bad Locks",
+          fetchMethod: FetchMethod.RSS,
+          url: "u",
+          retainedLocks: ["bad,name"],
+        }),
     ).toThrow("commas are not allowed");
   });
 });
@@ -321,9 +322,9 @@ describe("addChannel", () => {
 // ─── viewChannel ─────────────────────────────────────────────────────────────
 
 describe("viewChannel", () => {
-  it("returns channel config", () => {
+  it("returns channel config", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "View",
       fetchMethod: FetchMethod.RSS,
       url: "u",
@@ -333,7 +334,7 @@ describe("viewChannel", () => {
     expect(viewed.id).toBe(ch.id);
   });
 
-  it("throws for unknown channel", () => {
+  it("throws for unknown channel", async () => {
     const res = makeReservoir();
     expect(() => res.channelController.viewChannel("unknown-id")).toThrow("Channel not found");
   });
@@ -342,15 +343,19 @@ describe("viewChannel", () => {
 // ─── listChannels ─────────────────────────────────────────────────────────────
 
 describe("listChannels", () => {
-  it("returns empty array when no channels", () => {
+  it("returns empty array when no channels", async () => {
     const res = makeReservoir();
     expect(res.channelController.listChannels()).toEqual([]);
   });
 
-  it("returns all added channels", () => {
+  it("returns all added channels", async () => {
     const res = makeReservoir();
-    res.channelController.addChannel({ name: "A", fetchMethod: FetchMethod.RSS, url: "u1" });
-    res.channelController.addChannel({ name: "B", fetchMethod: FetchMethod.WebPage, url: "u2" });
+    await res.channelController.addChannel({ name: "A", fetchMethod: FetchMethod.RSS, url: "u1" });
+    await res.channelController.addChannel({
+      name: "B",
+      fetchMethod: FetchMethod.WebPage,
+      url: "u2",
+    });
     expect(res.channelController.listChannels()).toHaveLength(2);
   });
 });
@@ -378,11 +383,11 @@ describe("fetchChannel", () => {
     fs.chmodSync(fetcherPath, 0o755);
     const registered = res.addFetcher(fetcherPath);
 
-    const ch1 = res.channelController.addChannel({
+    const ch1 = await res.channelController.addChannel({
       name: "Custom 1",
       fetchMethod: registered.name,
     });
-    const ch2 = res.channelController.addChannel({
+    const ch2 = await res.channelController.addChannel({
       name: "Custom 2",
       fetchMethod: registered.name,
     });
@@ -406,7 +411,7 @@ describe("fetchChannel", () => {
     fs.chmodSync(fetcherPath, 0o755);
     const registered = res.addFetcher(fetcherPath);
 
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "Locked Channel",
       fetchMethod: registered.name,
       retainedLocks: ["alpha", "beta"],
@@ -437,7 +442,7 @@ describe("fetchChannel", () => {
     fs.chmodSync(fetcherPath, 0o755);
     const registered = res.addFetcher(fetcherPath);
 
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "Overwrite by idField",
       fetchMethod: registered.name,
       idField: "externalId",
@@ -484,7 +489,7 @@ describe("fetchChannel", () => {
     fs.chmodSync(fetcherPath, 0o755);
     const registered = res.addFetcher(fetcherPath);
 
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "Keep-both duplicates",
       fetchMethod: registered.name,
       idField: "externalId",
@@ -509,14 +514,14 @@ describe("fetchChannel", () => {
 // ─── editChannel ─────────────────────────────────────────────────────────────
 
 describe("editChannel", () => {
-  it("updates channel fields", () => {
+  it("updates channel fields", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "Old",
       fetchMethod: FetchMethod.RSS,
       fetchParams: { url: "u" },
     });
-    const updated = res.channelController.editChannel(ch.id, {
+    const updated = await res.channelController.editChannel(ch.id, {
       name: "New",
       fetchParams: { url: "https://new.com" },
     });
@@ -526,39 +531,39 @@ describe("editChannel", () => {
     expect(updated.id).toBe(ch.id);
   });
 
-  it("persists changes to disk", () => {
+  it("persists changes to disk", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "Old",
       fetchMethod: FetchMethod.RSS,
       url: "u",
     });
-    res.channelController.editChannel(ch.id, { name: "Persisted" });
+    await res.channelController.editChannel(ch.id, { name: "Persisted" });
     const reloaded = Reservoir.load(tmpDir).channelController.viewChannel(ch.id);
     expect(reloaded.name).toBe("Persisted");
   });
 
-  it("rejects retainedLocks with comma-separated names in editChannel", () => {
+  it("rejects retainedLocks with comma-separated names in editChannel", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "Old",
       fetchMethod: FetchMethod.RSS,
       url: "u",
     });
-    expect(() => res.channelController.editChannel(ch.id, { retainedLocks: ["bad,name"] })).toThrow(
-      "commas are not allowed",
-    );
+    await expect(
+      res.channelController.editChannel(ch.id, { retainedLocks: ["bad,name"] }),
+    ).rejects.toThrow("commas are not allowed");
   });
 
-  it("updates idField and duplicateStrategy", () => {
+  it("updates idField and duplicateStrategy", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "Old",
       fetchMethod: FetchMethod.RSS,
       url: "u",
     });
 
-    const updated = res.channelController.editChannel(ch.id, {
+    const updated = await res.channelController.editChannel(ch.id, {
       idField: "externalId",
       duplicateStrategy: "overwrite",
     });
@@ -571,31 +576,33 @@ describe("editChannel", () => {
 // ─── deleteChannel ───────────────────────────────────────────────────────────
 
 describe("deleteChannel", () => {
-  it("removes the channel directory", () => {
+  it("removes the channel directory", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "Del",
       fetchMethod: FetchMethod.RSS,
       url: "u",
     });
     const channelDir = channelDirForId(ch.id);
     expect(fs.existsSync(channelDir)).toBe(true);
-    res.channelController.deleteChannel(ch.id);
+    await res.channelController.deleteChannel(ch.id);
     expect(fs.existsSync(channelDir)).toBe(false);
   });
 
-  it("throws when deleting non-existent channel", () => {
+  it("throws when deleting non-existent channel", async () => {
     const res = makeReservoir();
-    expect(() => res.channelController.deleteChannel("no-such-id")).toThrow("Channel not found");
+    await expect(res.channelController.deleteChannel("no-such-id")).rejects.toThrow(
+      "Channel not found",
+    );
   });
 });
 
 // ─── listRetained ───────────────────────────────────────────────────────────-
 
 describe("listRetained", () => {
-  it("returns retained items across all channels", () => {
+  it("returns retained items across all channels", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "U",
       fetchMethod: FetchMethod.RSS,
       url: "u",
@@ -607,14 +614,14 @@ describe("listRetained", () => {
     expect(retained[0].id).toBe("item1");
   });
 
-  it("filters by channel IDs", () => {
+  it("filters by channel IDs", async () => {
     const res = makeReservoir();
-    const ch1 = res.channelController.addChannel({
+    const ch1 = await res.channelController.addChannel({
       name: "C1",
       fetchMethod: FetchMethod.RSS,
       url: "u",
     });
-    const ch2 = res.channelController.addChannel({
+    const ch2 = await res.channelController.addChannel({
       name: "C2",
       fetchMethod: FetchMethod.RSS,
       url: "u",
@@ -626,9 +633,9 @@ describe("listRetained", () => {
     expect(retained[0].id).toBe("a1");
   });
 
-  it("includes markdown content in returned items", () => {
+  it("includes markdown content in returned items", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "C",
       fetchMethod: FetchMethod.RSS,
       url: "u",
@@ -640,9 +647,9 @@ describe("listRetained", () => {
 });
 
 describe("listContent", () => {
-  it("derives title from frontmatter title when present", () => {
+  it("derives title from frontmatter title when present", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "Frontmatter title",
       fetchMethod: FetchMethod.RSS,
       url: "u",
@@ -659,9 +666,9 @@ describe("listContent", () => {
     expect(listed[0].title).toBe("Frontmatter Title");
   });
 
-  it("falls back to first H1 when frontmatter title is missing", () => {
+  it("falls back to first H1 when frontmatter title is missing", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "Heading title",
       fetchMethod: FetchMethod.RSS,
       url: "u",
@@ -678,9 +685,9 @@ describe("listContent", () => {
     expect(listed[0].title).toBe("Heading Title");
   });
 
-  it("leaves title undefined when markdown has no frontmatter title or H1", () => {
+  it("leaves title undefined when markdown has no frontmatter title or H1", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "Optional title",
       fetchMethod: FetchMethod.RSS,
       url: "u",
@@ -697,9 +704,9 @@ describe("listContent", () => {
     expect(listed[0].title).toBeUndefined();
   });
 
-  it("filters unretained items with retained=false", () => {
+  it("filters unretained items with retained=false", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "Mixed",
       fetchMethod: FetchMethod.RSS,
       url: "u",
@@ -712,9 +719,9 @@ describe("listContent", () => {
     expect(unretained[0].id).toBe("u1");
   });
 
-  it("filters retained items by specific lock name", () => {
+  it("filters retained items by specific lock name", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "Locks",
       fetchMethod: FetchMethod.RSS,
       url: "u",
@@ -727,9 +734,9 @@ describe("listContent", () => {
     expect(alpha.map((item) => item.id)).toEqual(["l1", "l3"]);
   });
 
-  it("filters retained items by multiple lock names", () => {
+  it("filters retained items by multiple lock names", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "Multi-locks",
       fetchMethod: FetchMethod.RSS,
       url: "u",
@@ -745,9 +752,9 @@ describe("listContent", () => {
     expect(filtered.map((item) => item.id)).toEqual(["m1", "m2"]);
   });
 
-  it("supports pagination with pageSize and pageOffset", () => {
+  it("supports pagination with pageSize and pageOffset", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "Paging",
       fetchMethod: FetchMethod.RSS,
       url: "u",
@@ -765,60 +772,62 @@ describe("listContent", () => {
 // ─── retain/release content ─────────────────────────────────────────────────-
 
 describe("retainContent / releaseContent", () => {
-  it("retainContent adds a lock", () => {
+  it("retainContent adds a lock", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "M",
       fetchMethod: FetchMethod.RSS,
       url: "u",
     });
     addTestItem(res, ch.id, { id: "r1", locks: [] });
-    res.lockController.retainContent("r1", "pin");
+    await res.lockController.retainContent("r1", "pin");
     const retained = res.contentController.listRetained();
     expect(retained.find((i) => i.id === "r1")).toBeDefined();
   });
 
-  it("releaseContent removes a lock", () => {
+  it("releaseContent removes a lock", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "M",
       fetchMethod: FetchMethod.RSS,
       url: "u",
     });
     addTestItem(res, ch.id, { id: "r2", locks: ["pin"] });
-    res.lockController.releaseContent("r2", "pin");
+    await res.lockController.releaseContent("r2", "pin");
     const retained = res.contentController.listRetained();
     expect(retained.find((i) => i.id === "r2")).toBeUndefined();
   });
 
-  it("default lock name is global", () => {
+  it("default lock name is global", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "M",
       fetchMethod: FetchMethod.RSS,
       url: "u",
     });
     addTestItem(res, ch.id, { id: "r3", locks: [] });
-    res.lockController.retainContent("r3");
+    await res.lockController.retainContent("r3");
     const retained = res.contentController.listRetained();
     const item = retained.find((i) => i.id === "r3");
     expect(item?.locks).toContain(GLOBAL_LOCK_NAME);
   });
 
-  it("throws for non-existent content id", () => {
+  it("throws for non-existent content id", async () => {
     const res = makeReservoir();
-    expect(() => res.lockController.retainContent("no-such-id")).toThrow("Content not found");
+    await expect(res.lockController.retainContent("no-such-id")).rejects.toThrow(
+      "Content not found",
+    );
   });
 
-  it("rejects lock names containing commas", () => {
+  it("rejects lock names containing commas", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "M",
       fetchMethod: FetchMethod.RSS,
       url: "u",
     });
     addTestItem(res, ch.id, { id: "r4", locks: [] });
-    expect(() => res.lockController.retainContent("r4", "bad,name")).toThrow(
+    await expect(res.lockController.retainContent("r4", "bad,name")).rejects.toThrow(
       "commas are not allowed",
     );
   });
@@ -827,48 +836,48 @@ describe("retainContent / releaseContent", () => {
 // ─── retain/release channel ─────────────────────────────────────────────────-
 
 describe("retainChannel / releaseChannel", () => {
-  it("retainChannel adds lock to channel config", () => {
+  it("retainChannel adds lock to channel config", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "M",
       fetchMethod: FetchMethod.RSS,
       url: "u",
     });
-    const updated = res.lockController.retainChannel(ch.id, "pin");
+    const updated = await res.lockController.retainChannel(ch.id, "pin");
     expect(updated.retainedLocks).toContain("pin");
   });
 
-  it("releaseChannel removes lock from channel config", () => {
+  it("releaseChannel removes lock from channel config", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "M",
       fetchMethod: FetchMethod.RSS,
       url: "u",
       retainedLocks: ["pin", "keep"],
     });
-    const updated = res.lockController.releaseChannel(ch.id, "pin");
+    const updated = await res.lockController.releaseChannel(ch.id, "pin");
     expect(updated.retainedLocks).toEqual(["keep"]);
   });
 
-  it("retainChannel defaults to global lock", () => {
+  it("retainChannel defaults to global lock", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "M",
       fetchMethod: FetchMethod.RSS,
       url: "u",
     });
-    const updated = res.lockController.retainChannel(ch.id);
+    const updated = await res.lockController.retainChannel(ch.id);
     expect(updated.retainedLocks).toContain(GLOBAL_LOCK_NAME);
   });
 
-  it("retainChannel rejects lock names containing commas", () => {
+  it("retainChannel rejects lock names containing commas", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "M",
       fetchMethod: FetchMethod.RSS,
       url: "u",
     });
-    expect(() => res.lockController.retainChannel(ch.id, "bad,name")).toThrow(
+    await expect(res.lockController.retainChannel(ch.id, "bad,name")).rejects.toThrow(
       "commas are not allowed",
     );
   });
@@ -877,9 +886,9 @@ describe("retainChannel / releaseChannel", () => {
 // ─── clean ─────────────────────────────────────────────────────────────────--
 
 describe("clean", () => {
-  it("does nothing when no maxSizeMB configured", () => {
+  it("does nothing when no maxSizeMB configured", async () => {
     const res = makeReservoir(); // no maxSizeMB
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "C",
       fetchMethod: FetchMethod.RSS,
       url: "u",
@@ -890,10 +899,10 @@ describe("clean", () => {
     expect(contentPathForId(ch.id, "del1")).not.toBeNull();
   });
 
-  it("deletes eligible files when over maxSizeMB", () => {
+  it("deletes eligible files when over maxSizeMB", async () => {
     // Use a very small maxSizeMB to force deletion
     const res = makeReservoir({ maxSizeMB: 0.000001 }); // ~1 byte
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "C",
       fetchMethod: FetchMethod.RSS,
       url: "u",
@@ -907,9 +916,9 @@ describe("clean", () => {
     expect(contentPathForId(ch.id, "old1")).toBeNull();
   });
 
-  it("prioritizes deleting unlocked items before locked items", () => {
+  it("prioritizes deleting unlocked items before locked items", async () => {
     const res = makeReservoir({ maxSizeMB: 0.004 });
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "C",
       fetchMethod: FetchMethod.RSS,
       url: "u",
@@ -924,9 +933,9 @@ describe("clean", () => {
     expect(contentPathForId(ch.id, "unlocked1")).toBeNull();
   });
 
-  it("does not delete items that have locks", () => {
+  it("does not delete items that have locks", async () => {
     const res = makeReservoir({ maxSizeMB: 0.000001 });
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "C",
       fetchMethod: FetchMethod.RSS,
       url: "u",
@@ -938,9 +947,9 @@ describe("clean", () => {
 });
 
 describe("content storage format", () => {
-  it("uses channel/item markdown paths and stores IDs in global id map", () => {
+  it("uses channel/item markdown paths and stores IDs in global id map", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "Storage",
       fetchMethod: FetchMethod.RSS,
       url: "https://example.com/feed",
@@ -982,7 +991,7 @@ describe("content storage format", () => {
 
   it("removes orphaned metadata when tracked files are deleted during sync", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "Orphans",
       fetchMethod: FetchMethod.RSS,
       url: "https://example.com/feed",
@@ -1017,9 +1026,9 @@ describe("content storage format", () => {
 // ─── retainContentRange / releaseContentRange ──────────────────────────────
 
 describe("retainContentRange / releaseContentRange", () => {
-  it("retains items in a range by ID", () => {
+  it("retains items in a range by ID", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       id: "ch1",
       name: "Test Channel 1",
       fetchMethod: FetchMethod.RSS,
@@ -1032,7 +1041,7 @@ describe("retainContentRange / releaseContentRange", () => {
     addTestItem(res, ch.id, { id: "3", fetchedAt: "2024-01-03T00:00:00.000Z", locks: [] });
     addTestItem(res, ch.id, { id: "4", fetchedAt: "2024-01-04T00:00:00.000Z", locks: [] });
 
-    const count = res.lockController.retainContentRange({
+    const count = await res.lockController.retainContentRange({
       fromId: "2",
       toId: "3",
       lockName: "test-lock",
@@ -1046,9 +1055,9 @@ describe("retainContentRange / releaseContentRange", () => {
     expect(item3?.locks).toEqual(["test-lock"]);
   });
 
-  it("retains items with open-ended range (fromId only)", () => {
+  it("retains items with open-ended range (fromId only)", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       id: "ch2",
       name: "Test Channel 2",
       fetchMethod: FetchMethod.RSS,
@@ -1059,7 +1068,7 @@ describe("retainContentRange / releaseContentRange", () => {
     addTestItem(res, ch.id, { id: "11", fetchedAt: "2024-01-02T00:00:00.000Z", locks: [] });
     addTestItem(res, ch.id, { id: "12", fetchedAt: "2024-01-03T00:00:00.000Z", locks: [] });
 
-    const count = res.lockController.retainContentRange({ fromId: "11" }); // Uses GLOBAL_LOCK_NAME by default
+    const count = await res.lockController.retainContentRange({ fromId: "11" }); // Uses GLOBAL_LOCK_NAME by default
     expect(count).toBe(2);
 
     const allItems = res.contentController.listRetained();
@@ -1069,9 +1078,9 @@ describe("retainContentRange / releaseContentRange", () => {
     expect(allItems.find((x) => x.id === "12")?.locks).toEqual([GLOBAL_LOCK_NAME]);
   });
 
-  it("retains items with open-ended range (toId only)", () => {
+  it("retains items with open-ended range (toId only)", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       id: "ch3",
       name: "Test Channel 3",
       fetchMethod: FetchMethod.RSS,
@@ -1082,7 +1091,10 @@ describe("retainContentRange / releaseContentRange", () => {
     addTestItem(res, ch.id, { id: "21", fetchedAt: "2024-01-02T00:00:00.000Z", locks: [] });
     addTestItem(res, ch.id, { id: "22", fetchedAt: "2024-01-03T00:00:00.000Z", locks: [] });
 
-    const count = res.lockController.retainContentRange({ toId: "21", lockName: "early" });
+    const count = await res.lockController.retainContentRange({
+      toId: "21",
+      lockName: "early",
+    });
     expect(count).toBe(2);
 
     const allItems = res.contentController.listRetained();
@@ -1092,15 +1104,15 @@ describe("retainContentRange / releaseContentRange", () => {
     expect(allItems.find((x) => x.id === "22")).toBeUndefined();
   });
 
-  it("filters by channel", () => {
+  it("filters by channel", async () => {
     const res = makeReservoir();
-    const ch1 = res.channelController.addChannel({
+    const ch1 = await res.channelController.addChannel({
       id: "ch1",
       name: "Test Channel 1",
       fetchMethod: FetchMethod.RSS,
       url: "https://example.com/feed1",
     });
-    const ch2 = res.channelController.addChannel({
+    const ch2 = await res.channelController.addChannel({
       id: "ch2",
       name: "Test Channel 2",
       fetchMethod: FetchMethod.RSS,
@@ -1111,7 +1123,7 @@ describe("retainContentRange / releaseContentRange", () => {
     addTestItem(res, ch2.id, { id: "31", fetchedAt: "2024-01-02T00:00:00.000Z", locks: [] });
     addTestItem(res, ch1.id, { id: "32", fetchedAt: "2024-01-03T00:00:00.000Z", locks: [] });
 
-    const count = res.lockController.retainContentRange({
+    const count = await res.lockController.retainContentRange({
       fromId: "30",
       toId: "32",
       channelId: ch1.id,
@@ -1126,9 +1138,9 @@ describe("retainContentRange / releaseContentRange", () => {
     expect(allItems.find((x) => x.id === "32")?.locks).toEqual(["ch1-lock"]);
   });
 
-  it("releases items in a range", () => {
+  it("releases items in a range", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       id: "ch4",
       name: "Test Channel 4",
       fetchMethod: FetchMethod.RSS,
@@ -1147,7 +1159,7 @@ describe("retainContentRange / releaseContentRange", () => {
     });
     addTestItem(res, ch.id, { id: "42", fetchedAt: "2024-01-03T00:00:00.000Z", locks: ["keep"] });
 
-    const count = res.lockController.releaseContentRange({
+    const count = await res.lockController.releaseContentRange({
       fromId: "40",
       toId: "41",
       lockName: "remove",
@@ -1160,9 +1172,9 @@ describe("retainContentRange / releaseContentRange", () => {
     expect(retained.find((x) => x.id === "42")?.locks).toEqual(["keep"]);
   });
 
-  it("throws if fromId not found", () => {
+  it("throws if fromId not found", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       id: "ch5",
       name: "Test Channel 5",
       fetchMethod: FetchMethod.RSS,
@@ -1171,14 +1183,14 @@ describe("retainContentRange / releaseContentRange", () => {
 
     addTestItem(res, ch.id, { id: "50", fetchedAt: "2024-01-01T00:00:00.000Z", locks: [] });
 
-    expect(() => res.lockController.retainContentRange({ fromId: "999" })).toThrow(
+    await expect(res.lockController.retainContentRange({ fromId: "999" })).rejects.toThrow(
       "Start ID not found: 999",
     );
   });
 
-  it("throws if toId not found", () => {
+  it("throws if toId not found", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       id: "ch6",
       name: "Test Channel 6",
       fetchMethod: FetchMethod.RSS,
@@ -1187,14 +1199,14 @@ describe("retainContentRange / releaseContentRange", () => {
 
     addTestItem(res, ch.id, { id: "60", fetchedAt: "2024-01-01T00:00:00.000Z", locks: [] });
 
-    expect(() => res.lockController.retainContentRange({ toId: "999" })).toThrow(
+    await expect(res.lockController.retainContentRange({ toId: "999" })).rejects.toThrow(
       "End ID not found: 999",
     );
   });
 
-  it("throws if fromId comes after toId temporally", () => {
+  it("throws if fromId comes after toId temporally", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       id: "ch7",
       name: "Test Channel 7",
       fetchMethod: FetchMethod.RSS,
@@ -1204,14 +1216,14 @@ describe("retainContentRange / releaseContentRange", () => {
     addTestItem(res, ch.id, { id: "70", fetchedAt: "2024-01-01T00:00:00.000Z", locks: [] });
     addTestItem(res, ch.id, { id: "71", fetchedAt: "2024-01-02T00:00:00.000Z", locks: [] });
 
-    expect(() => res.lockController.retainContentRange({ fromId: "71", toId: "70" })).toThrow(
-      "Invalid range: fromId",
-    );
+    await expect(
+      res.lockController.retainContentRange({ fromId: "71", toId: "70" }),
+    ).rejects.toThrow("Invalid range: fromId");
   });
 
-  it("handles single-item range", () => {
+  it("handles single-item range", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       id: "ch8",
       name: "Test Channel 8",
       fetchMethod: FetchMethod.RSS,
@@ -1221,7 +1233,7 @@ describe("retainContentRange / releaseContentRange", () => {
     addTestItem(res, ch.id, { id: "80", fetchedAt: "2024-01-01T00:00:00.000Z", locks: [] });
     addTestItem(res, ch.id, { id: "81", fetchedAt: "2024-01-02T00:00:00.000Z", locks: [] });
 
-    const count = res.lockController.retainContentRange({
+    const count = await res.lockController.retainContentRange({
       fromId: "81",
       toId: "81",
       lockName: "single",

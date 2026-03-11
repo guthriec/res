@@ -125,14 +125,14 @@ export class ReservoirImpl implements Reservoir {
     return resolveCustomFetchersDirectory();
   }
 
-  setMaxSizeMB(maxSizeMB: number): ReservoirConfig {
+  async setMaxSizeMB(maxSizeMB: number): Promise<ReservoirConfig> {
     if (!Number.isFinite(maxSizeMB) || maxSizeMB <= 0) {
       throw new Error(`Invalid max size '${maxSizeMB}'. Expected a positive number.`);
     }
 
     const previousMaxSizeMB = this.config.maxSizeMB;
     this.config = { ...this.config, maxSizeMB };
-    this.saveReservoirConfig();
+    await this.saveReservoirConfig();
 
     if (previousMaxSizeMB !== undefined && maxSizeMB < previousMaxSizeMB) {
       this.evictionController.clean();
@@ -174,8 +174,11 @@ export class ReservoirImpl implements Reservoir {
     return this.fetchOrchestrator.fetchChannel(channelId);
   }
 
-  private saveReservoirConfig(): void {
-    fs.writeFileSync(path.join(this.dir, CONFIG_FILE), JSON.stringify(this.config, null, 2));
+  private async saveReservoirConfig(): Promise<void> {
+    await fs.promises.writeFile(
+      path.join(this.dir, CONFIG_FILE),
+      JSON.stringify(this.config, null, 2),
+    );
   }
 
   // ─── Private helpers ──────────────────────────────────────────────────────

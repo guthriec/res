@@ -152,7 +152,7 @@ export class FetchOrchestrator {
       });
     }
     if (persisted.length > 0) {
-      this.channelController.saveMetadata(channelId, metadata);
+      await this.channelController.saveMetadata(channelId, metadata);
       logger.debug(
         `[res sync] [${channelId}] wrote metadata after fetch (${persisted.length} item(s))`,
       );

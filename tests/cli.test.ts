@@ -108,14 +108,14 @@ function addTestItem(
 // ─── channel list ────────────────────────────────────────────────────────────
 
 describe("channel list output format", () => {
-  it("includes relative directory path for each channel", () => {
+  it("includes relative directory path for each channel", async () => {
     const res = makeReservoir();
-    const ch1 = res.channelController.addChannel({
+    const ch1 = await res.channelController.addChannel({
       name: "Tech News",
       fetchMethod: FetchMethod.RSS,
       url: "https://example.com/rss",
     });
-    const ch2 = res.channelController.addChannel({
+    const ch2 = await res.channelController.addChannel({
       name: "Another Channel",
       fetchMethod: FetchMethod.RSS,
       url: "https://example.com/rss2",
@@ -135,9 +135,9 @@ describe("channel list output format", () => {
     }
   });
 
-  it("channel directory path matches channel ID", () => {
+  it("channel directory path matches channel ID", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "Sample Channel",
       fetchMethod: FetchMethod.RSS,
       url: "https://example.com/feed",
@@ -156,9 +156,9 @@ describe("channel list output format", () => {
 // ─── retained list ─────────────────────────────────────────────────────────-
 
 describe("retained list output format", () => {
-  it("includes relative file path for each retained item", () => {
+  it("includes relative file path for each retained item", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "Test Channel",
       fetchMethod: FetchMethod.RSS,
       url: "https://example.com/rss",
@@ -188,9 +188,9 @@ describe("retained list output format", () => {
     }
   });
 
-  it("file path contains correct channel directory structure", () => {
+  it("file path contains correct channel directory structure", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "News Feed",
       fetchMethod: FetchMethod.RSS,
       url: "https://example.com/feed",
@@ -215,9 +215,9 @@ describe("retained list output format", () => {
     expect(pathParts[1]).toBe("content.md");
   });
 
-  it("file path remains correct after retaining and releasing items", () => {
+  it("file path remains correct after retaining and releasing items", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "Updates",
       fetchMethod: FetchMethod.RSS,
       url: "https://example.com/updates",
@@ -230,11 +230,11 @@ describe("retained list output format", () => {
     const originalPath = retainedBefore[0].filePath;
 
     // Release
-    res.lockController.releaseContent(itemId, GLOBAL_LOCK_NAME);
+    await res.lockController.releaseContent(itemId, GLOBAL_LOCK_NAME);
     expect(res.contentController.listRetained()).toHaveLength(0);
 
     // Retain again
-    res.lockController.retainContent(itemId, GLOBAL_LOCK_NAME);
+    await res.lockController.retainContent(itemId, GLOBAL_LOCK_NAME);
     const retainedAfter = res.contentController.listRetained();
     expect(retainedAfter).toHaveLength(1);
 
@@ -242,14 +242,14 @@ describe("retained list output format", () => {
     expect(retainedAfter[0].filePath).toBe(originalPath);
   });
 
-  it("filters by channel and maintains correct file paths", () => {
+  it("filters by channel and maintains correct file paths", async () => {
     const res = makeReservoir();
-    const ch1 = res.channelController.addChannel({
+    const ch1 = await res.channelController.addChannel({
       name: "Channel One",
       fetchMethod: FetchMethod.RSS,
       url: "https://example.com/1",
     });
-    const ch2 = res.channelController.addChannel({
+    const ch2 = await res.channelController.addChannel({
       name: "Channel Two",
       fetchMethod: FetchMethod.RSS,
       url: "https://example.com/2",
@@ -267,9 +267,9 @@ describe("retained list output format", () => {
     expect(retainedCh2[0].id).not.toBeUndefined();
   });
 
-  it("handles multiple items in same channel with unique file paths", () => {
+  it("handles multiple items in same channel with unique file paths", async () => {
     const res = makeReservoir();
-    const ch = res.channelController.addChannel({
+    const ch = await res.channelController.addChannel({
       name: "Blog",
       fetchMethod: FetchMethod.RSS,
       url: "https://example.com/blog",

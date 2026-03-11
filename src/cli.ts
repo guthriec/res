@@ -96,13 +96,13 @@ const configCmd = program.command("config").description("Manage reservoir config
 configCmd
   .command("set-max-size <mb>")
   .description("Update max content size in MB (decreasing this value triggers an eviction pass)")
-  .action((mb: string) => {
+  .action(async (mb: string) => {
     const reservoir = loadReservoir(getGlobalDir());
     const maxSizeMB = parsePositiveNumber(mb, "max-size");
     if (maxSizeMB === undefined) {
       throw new Error("Invalid max-size value.");
     }
-    reservoir.setMaxSizeMB(maxSizeMB);
+    await reservoir.setMaxSizeMB(maxSizeMB);
     console.log(`Set max reservoir size to ${maxSizeMB} MB`);
   });
 
@@ -130,9 +130,9 @@ channelCmd
     "optional field name in fetched item content frontmatter used for deduplication",
   )
   .option("--duplicate-strategy <strategy>", "duplicate handling: overwrite | keep-both")
-  .action((name: string, opts: ChannelAddCliOptions) => {
+  .action(async (name: string, opts: ChannelAddCliOptions) => {
     const reservoir = loadReservoir(getGlobalDir());
-    const channel = reservoir.channelController.addChannel(buildChannelAddConfig(name, opts));
+    const channel = await reservoir.channelController.addChannel(buildChannelAddConfig(name, opts));
     console.log(JSON.stringify(channel, null, 2));
   });
 
@@ -149,19 +149,19 @@ channelCmd
     "new field name in fetched item content frontmatter used for deduplication",
   )
   .option("--duplicate-strategy <strategy>", "new duplicate handling: overwrite | keep-both")
-  .action((id: string, opts: ChannelEditCliOptions) => {
+  .action(async (id: string, opts: ChannelEditCliOptions) => {
     const reservoir = loadReservoir(getGlobalDir());
     const existing = reservoir.channelController.viewChannel(id);
     const updates = buildChannelEditUpdates(existing.fetchParams, opts);
-    const channel = reservoir.channelController.editChannel(id, updates);
+    const channel = await reservoir.channelController.editChannel(id, updates);
     console.log(JSON.stringify(channel, null, 2));
   });
 
 channelCmd
   .command("delete <id>")
   .description("Delete a channel and all its content")
-  .action((id: string) => {
-    loadReservoir(getGlobalDir()).channelController.deleteChannel(id);
+  .action(async (id: string) => {
+    await loadReservoir(getGlobalDir()).channelController.deleteChannel(id);
     console.log(`Deleted channel ${id}`);
   });
 
@@ -232,8 +232,8 @@ const retainCmd = program.command("retain").description("Apply a lock to content
 retainCmd
   .command("content <id> [lockName]")
   .description("Retain a content item by adding a lock name (defaults to [global])")
-  .action((id: string, lockName: string | undefined) => {
-    loadReservoir(getGlobalDir()).lockController.retainContent(id, lockName);
+  .action(async (id: string, lockName: string | undefined) => {
+    await loadReservoir(getGlobalDir()).lockController.retainContent(id, lockName);
     console.log(`Retained content ${id}${lockName ? ` with lock ${lockName}` : ""}`);
   });
 
@@ -243,13 +243,13 @@ retainCmd
   .option("--from <id>", "start from this ID (inclusive)")
   .option("--to <id>", "up to this ID (inclusive)")
   .option("--channel <id>", "restrict to this channel")
-  .action(
+  .action(async
     (lockName: string | undefined, opts: { from?: string; to?: string; channel?: string }) => {
       if (!opts.from && !opts.to) {
         console.error("Error: Must specify at least --from or --to");
         process.exit(1);
       }
-      const count = loadReservoir(getGlobalDir()).lockController.retainContentRange({
+      const count = await loadReservoir(getGlobalDir()).lockController.retainContentRange({
         fromId: opts.from,
         toId: opts.to,
         channelId: opts.channel,
@@ -262,8 +262,8 @@ retainCmd
 retainCmd
   .command("channel <id> [lockName]")
   .description("Retain a channel by adding a lock applied to newly fetched content")
-  .action((id: string, lockName: string | undefined) => {
-    const channel = loadReservoir(getGlobalDir()).lockController.retainChannel(id, lockName);
+  .action(async (id: string, lockName: string | undefined) => {
+    const channel = await loadReservoir(getGlobalDir()).lockController.retainChannel(id, lockName);
     console.log(JSON.stringify(channel, null, 2));
   });
 
@@ -272,8 +272,8 @@ const releaseCmd = program.command("release").description("Remove a lock from co
 releaseCmd
   .command("content <id> [lockName]")
   .description("Release a content item lock name (defaults to [global])")
-  .action((id: string, lockName: string | undefined) => {
-    loadReservoir(getGlobalDir()).lockController.releaseContent(id, lockName);
+  .action(async (id: string, lockName: string | undefined) => {
+    await loadReservoir(getGlobalDir()).lockController.releaseContent(id, lockName);
     console.log(`Released content ${id}${lockName ? ` lock ${lockName}` : ""}`);
   });
 
@@ -283,13 +283,13 @@ releaseCmd
   .option("--from <id>", "start from this ID (inclusive)")
   .option("--to <id>", "up to this ID (inclusive)")
   .option("--channel <id>", "restrict to this channel")
-  .action(
+  .action(async
     (lockName: string | undefined, opts: { from?: string; to?: string; channel?: string }) => {
       if (!opts.from && !opts.to) {
         console.error("Error: Must specify at least --from or --to");
         process.exit(1);
       }
-      const count = loadReservoir(getGlobalDir()).lockController.releaseContentRange({
+      const count = await loadReservoir(getGlobalDir()).lockController.releaseContentRange({
         fromId: opts.from,
         toId: opts.to,
         channelId: opts.channel,
@@ -302,8 +302,8 @@ releaseCmd
 releaseCmd
   .command("channel <id> [lockName]")
   .description("Release a channel lock that applies to newly fetched content")
-  .action((id: string, lockName: string | undefined) => {
-    const channel = loadReservoir(getGlobalDir()).lockController.releaseChannel(id, lockName);
+  .action(async (id: string, lockName: string | undefined) => {
+    const channel = await loadReservoir(getGlobalDir()).lockController.releaseChannel(id, lockName);
     console.log(JSON.stringify(channel, null, 2));
   });
 

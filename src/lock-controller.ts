@@ -10,50 +10,50 @@ const CHANNEL_CONFIG_FILE = "channel.json";
 export class LockControllerImpl implements LockController {
   constructor(private readonly channelController: ChannelControllerImpl) {}
 
-  retainContent(contentId: string, lockName?: string): void {
-    this.updateContentLock(contentId, InputNormalizer.lockName(lockName), true);
+  async retainContent(contentId: string, lockName?: string): Promise<void> {
+    await this.updateContentLock(contentId, InputNormalizer.lockName(lockName), true);
   }
 
-  releaseContent(contentId: string, lockName?: string): void {
-    this.updateContentLock(contentId, InputNormalizer.lockName(lockName), false);
+  async releaseContent(contentId: string, lockName?: string): Promise<void> {
+    await this.updateContentLock(contentId, InputNormalizer.lockName(lockName), false);
   }
 
-  retainContentRange(options: {
+  async retainContentRange(options: {
     fromId?: string;
     toId?: string;
     channelId?: string;
     lockName?: string;
-  }): number {
+  }): Promise<number> {
     return this.updateContentLockRange({ ...options, retain: true });
   }
 
-  releaseContentRange(options: {
+  async releaseContentRange(options: {
     fromId?: string;
     toId?: string;
     channelId?: string;
     lockName?: string;
-  }): number {
+  }): Promise<number> {
     return this.updateContentLockRange({ ...options, retain: false });
   }
 
-  retainChannel(channelId: string, lockName?: string): Channel {
+  async retainChannel(channelId: string, lockName?: string): Promise<Channel> {
     const channel = this.channelController.viewChannel(channelId);
     const normalized = InputNormalizer.lockName(lockName);
     const retainedLocks = InputNormalizer.locks([...channel.retainedLocks, normalized]);
     const updated: Channel = { ...channel, retainedLocks };
-    fs.writeFileSync(
+    await fs.promises.writeFile(
       path.join(this.channelController.resolveChannelDir(channelId), CHANNEL_CONFIG_FILE),
       JSON.stringify(updated, null, 2),
     );
     return updated;
   }
 
-  releaseChannel(channelId: string, lockName?: string): Channel {
+  async releaseChannel(channelId: string, lockName?: string): Promise<Channel> {
     const channel = this.channelController.viewChannel(channelId);
     const normalized = InputNormalizer.lockName(lockName);
     const retainedLocks = channel.retainedLocks.filter((name) => name !== normalized);
     const updated: Channel = { ...channel, retainedLocks };
-    fs.writeFileSync(
+    await fs.promises.writeFile(
       path.join(this.channelController.resolveChannelDir(channelId), CHANNEL_CONFIG_FILE),
       JSON.stringify(updated, null, 2),
     );
@@ -69,7 +69,11 @@ export class LockControllerImpl implements LockController {
     return null;
   }
 
-  private updateContentLock(contentId: string, lockName: string, retain: boolean): void {
+  private async updateContentLock(
+    contentId: string,
+    lockName: string,
+    retain: boolean,
+  ): Promise<void> {
     const found = this.findItem(contentId);
     if (!found) throw new Error(`Content not found: ${contentId}`);
     const meta = this.channelController.loadMetadata(found.channelId);
@@ -79,16 +83,16 @@ export class LockControllerImpl implements LockController {
     } else {
       item.locks = item.locks.filter((name) => name !== lockName);
     }
-    this.channelController.saveMetadata(found.channelId, meta);
+    await this.channelController.saveMetadata(found.channelId, meta);
   }
 
-  private updateContentLockRange(options: {
+  private async updateContentLockRange(options: {
     fromId?: string;
     toId?: string;
     channelId?: string;
     lockName?: string;
     retain: boolean;
-  }): number {
+  }): Promise<number> {
     const { fromId, toId, channelId, lockName, retain } = options;
     const normalized = InputNormalizer.lockName(lockName);
     const channels = channelId
@@ -136,7 +140,7 @@ export class LockControllerImpl implements LockController {
     if (!foundTo) throw new Error(`End ID not found: ${toId}`);
 
     for (const [chId, meta] of metaByChannel.entries()) {
-      this.channelController.saveMetadata(chId, meta);
+      await this.channelController.saveMetadata(chId, meta);
     }
 
     return count;

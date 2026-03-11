@@ -18,7 +18,7 @@ interface FakeState {
 class ChannelControllerFake implements ChannelController {
   constructor(private readonly state: FakeState) {}
 
-  addChannel(config: ChannelConfig): Channel {
+  async addChannel(config: ChannelConfig): Promise<Channel> {
     const slug =
       config.name
         .trim()
@@ -47,7 +47,7 @@ class ChannelControllerFake implements ChannelController {
     return channel;
   }
 
-  editChannel(channelId: string, updates: Partial<ChannelConfig>): Channel {
+  async editChannel(channelId: string, updates: Partial<ChannelConfig>): Promise<Channel> {
     const existing = this.viewChannel(channelId);
     const updated: Channel = {
       ...existing,
@@ -59,7 +59,7 @@ class ChannelControllerFake implements ChannelController {
     return updated;
   }
 
-  deleteChannel(channelId: string): void {
+  async deleteChannel(channelId: string): Promise<void> {
     if (!this.state.channels.has(channelId)) {
       throw new Error(`Channel not found: ${channelId}`);
     }
@@ -119,7 +119,7 @@ class ContentControllerFake implements ContentController {
 class LockControllerFake implements LockController {
   constructor(private readonly state: FakeState) {}
 
-  retainContent(contentId: string, lockName: string = GLOBAL_LOCK_NAME): void {
+  async retainContent(contentId: string, lockName: string = GLOBAL_LOCK_NAME): Promise<void> {
     const item = this.state.content.find((i) => i.id === contentId);
     if (!item) throw new Error(`Content not found: ${contentId}`);
     if (!item.locks.includes(lockName)) {
@@ -127,31 +127,31 @@ class LockControllerFake implements LockController {
     }
   }
 
-  releaseContent(contentId: string, lockName: string = GLOBAL_LOCK_NAME): void {
+  async releaseContent(contentId: string, lockName: string = GLOBAL_LOCK_NAME): Promise<void> {
     const item = this.state.content.find((i) => i.id === contentId);
     if (!item) throw new Error(`Content not found: ${contentId}`);
     item.locks = item.locks.filter((name) => name !== lockName);
   }
 
-  retainContentRange(options: {
+  async retainContentRange(options: {
     fromId?: string;
     toId?: string;
     channelId?: string;
     lockName?: string;
-  }): number {
+  }): Promise<number> {
     return this.updateRange({ ...options, retain: true });
   }
 
-  releaseContentRange(options: {
+  async releaseContentRange(options: {
     fromId?: string;
     toId?: string;
     channelId?: string;
     lockName?: string;
-  }): number {
+  }): Promise<number> {
     return this.updateRange({ ...options, retain: false });
   }
 
-  retainChannel(channelId: string, lockName: string = GLOBAL_LOCK_NAME): Channel {
+  async retainChannel(channelId: string, lockName: string = GLOBAL_LOCK_NAME): Promise<Channel> {
     const channel = this.state.channels.get(channelId);
     if (!channel) throw new Error(`Channel not found: ${channelId}`);
     const retainedLocks = channel.retainedLocks.includes(lockName)
@@ -162,7 +162,7 @@ class LockControllerFake implements LockController {
     return updated;
   }
 
-  releaseChannel(channelId: string, lockName: string = GLOBAL_LOCK_NAME): Channel {
+  async releaseChannel(channelId: string, lockName: string = GLOBAL_LOCK_NAME): Promise<Channel> {
     const channel = this.state.channels.get(channelId);
     if (!channel) throw new Error(`Channel not found: ${channelId}`);
     const retainedLocks = channel.retainedLocks.filter((name) => name !== lockName);
@@ -261,7 +261,7 @@ export class ReservoirFake implements Reservoir {
     return { ...this.state.config };
   }
 
-  setMaxSizeMB(maxSizeMB: number): ReservoirConfig {
+  async setMaxSizeMB(maxSizeMB: number): Promise<ReservoirConfig> {
     this.state.config = { ...this.state.config, maxSizeMB };
     return this.reservoirConfig;
   }

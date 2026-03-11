@@ -84,7 +84,7 @@ export class FilesystemSynchronizer {
         metadataChanged = true;
       }
       if (metadataChanged) {
-        this.channelController.saveMetadata(channel.id, metadata);
+        await this.channelController.saveMetadata(channel.id, metadata);
         logger.debug(
           `[res sync] [${channel.id}] wrote metadata (removed=${orphanedRemoved}, updated=${recordsUpdated}, items=${metadata.items.length})`,
         );

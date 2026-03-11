@@ -113,15 +113,18 @@ export class ChannelControllerImpl implements ChannelController {
 
     if (needsWrite) {
       const migrated = { items: lockStateItems };
-      this.saveMetadata(channelId, migrated);
+      fs.writeFileSync(
+        path.join(this.resolveChannelDir(channelId), CHANNEL_METADATA_FILE),
+        JSON.stringify(migrated, null, 2),
+      );
       return migrated;
     }
 
     return { items: lockStateItems };
   }
 
-  saveMetadata(channelId: string, metadata: { items: ContentLockState[] }): void {
-    fs.writeFileSync(
+  saveMetadata(channelId: string, metadata: { items: ContentLockState[] }): Promise<void> {
+    return fs.promises.writeFile(
       path.join(this.resolveChannelDir(channelId), CHANNEL_METADATA_FILE),
       JSON.stringify(metadata, null, 2),
     );
@@ -130,7 +133,10 @@ export class ChannelControllerImpl implements ChannelController {
   removeFromMetadata(channelId: string, contentId: string): void {
     const metadata = this.loadMetadata(channelId);
     metadata.items = metadata.items.filter((item) => item.id !== contentId);
-    this.saveMetadata(channelId, metadata);
+    fs.writeFileSync(
+      path.join(this.resolveChannelDir(channelId), CHANNEL_METADATA_FILE),
+      JSON.stringify(metadata, null, 2),
+    );
   }
 
   readContentFilesById(channelId: string): Map<string, ParsedContentFile> {
@@ -201,9 +207,9 @@ export class ChannelControllerImpl implements ChannelController {
     throw new Error(`Channel not found: ${channelId}`);
   }
 
-  addChannel(config: ChannelConfig): Channel {
+  async addChannel(config: ChannelConfig): Promise<Channel> {
     const channelsDir = this.resolveChannelMetadataRoot();
-    fs.mkdirSync(channelsDir, { recursive: true });
+    await fs.promises.mkdir(channelsDir, { recursive: true });
     const baseDirName = channelDirectorySlug(config.name);
     let channelDirName = baseDirName;
     let suffix = 2;
@@ -226,16 +232,19 @@ export class ChannelControllerImpl implements ChannelController {
     };
 
     const channelDir = path.join(channelsDir, channelDirName);
-    fs.mkdirSync(channelDir, { recursive: true });
-    fs.writeFileSync(path.join(channelDir, CHANNEL_CONFIG_FILE), JSON.stringify(channel, null, 2));
-    fs.writeFileSync(
+    await fs.promises.mkdir(channelDir, { recursive: true });
+    await fs.promises.writeFile(
+      path.join(channelDir, CHANNEL_CONFIG_FILE),
+      JSON.stringify(channel, null, 2),
+    );
+    await fs.promises.writeFile(
       path.join(channelDir, CHANNEL_METADATA_FILE),
       JSON.stringify({ items: [] }, null, 2),
     );
     return channel;
   }
 
-  editChannel(channelId: string, updates: Partial<ChannelConfig>): Channel {
+  async editChannel(channelId: string, updates: Partial<ChannelConfig>): Promise<Channel> {
     const existing = this.viewChannel(channelId);
     const normalizedUpdates: Partial<ChannelConfig> = { ...updates };
     if (updates.idField !== undefined) {
@@ -253,13 +262,16 @@ export class ChannelControllerImpl implements ChannelController {
     }
     const updated: Channel = InputNormalizer.channel({ ...existing, ...normalizedUpdates });
     const channelDir = this.resolveChannelDir(channelId);
-    fs.writeFileSync(path.join(channelDir, CHANNEL_CONFIG_FILE), JSON.stringify(updated, null, 2));
+    await fs.promises.writeFile(
+      path.join(channelDir, CHANNEL_CONFIG_FILE),
+      JSON.stringify(updated, null, 2),
+    );
     return updated;
   }
 
-  deleteChannel(channelId: string): void {
+  async deleteChannel(channelId: string): Promise<void> {
     const channelDir = this.resolveChannelDir(channelId);
-    fs.rmSync(channelDir, { recursive: true, force: true });
+    await fs.promises.rm(channelDir, { recursive: true, force: true });
   }
 
   viewChannel(channelId: string): Channel {

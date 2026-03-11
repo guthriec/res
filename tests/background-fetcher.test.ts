@@ -77,7 +77,7 @@ describe("runScheduledFetchTick", () => {
     }
 
     const registered = reservoir.addFetcher(executablePath);
-    const channel = reservoir.channelController.addChannel({
+    const channel = await reservoir.channelController.addChannel({
       name: "Custom Scheduled",
       fetchMethod: registered.name,
       refreshInterval: 1,

@@ -1,9 +1,9 @@
 import type { ChannelConfig, Channel, ContentItem, ReservoirConfig } from "./types";
 
 export interface ChannelController {
-  addChannel(config: ChannelConfig): Channel;
-  editChannel(channelId: string, updates: Partial<ChannelConfig>): Channel;
-  deleteChannel(channelId: string): void;
+  addChannel(config: ChannelConfig): Promise<Channel>;
+  editChannel(channelId: string, updates: Partial<ChannelConfig>): Promise<Channel>;
+  deleteChannel(channelId: string): Promise<void>;
   viewChannel(channelId: string): Channel;
   listChannels(): Channel[];
 }
@@ -20,22 +20,22 @@ export interface ContentController {
 }
 
 export interface LockController {
-  retainContent(contentId: string, lockName?: string): void;
-  releaseContent(contentId: string, lockName?: string): void;
+  retainContent(contentId: string, lockName?: string): Promise<void>;
+  releaseContent(contentId: string, lockName?: string): Promise<void>;
   retainContentRange(options: {
     fromId?: string;
     toId?: string;
     channelId?: string;
     lockName?: string;
-  }): number;
+  }): Promise<number>;
   releaseContentRange(options: {
     fromId?: string;
     toId?: string;
     channelId?: string;
     lockName?: string;
-  }): number;
-  retainChannel(channelId: string, lockName?: string): Channel;
-  releaseChannel(channelId: string, lockName?: string): Channel;
+  }): Promise<number>;
+  retainChannel(channelId: string, lockName?: string): Promise<Channel>;
+  releaseChannel(channelId: string, lockName?: string): Promise<Channel>;
 }
 
 export interface EvictionController {
@@ -50,7 +50,7 @@ export interface Reservoir {
   readonly directory: string;
   readonly reservoirConfig: ReservoirConfig;
   readonly customFetchersDirectory: string;
-  setMaxSizeMB(maxSizeMB: number): ReservoirConfig;
+  setMaxSizeMB(maxSizeMB: number): Promise<ReservoirConfig>;
   addFetcher(executablePath: string): { name: string; destinationPath: string };
   fetchChannel(channelId: string): Promise<ContentItem[]>;
 }
