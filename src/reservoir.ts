@@ -26,10 +26,10 @@ export class ReservoirImpl implements Reservoir {
   private readonly fetchOrchestrator: FetchOrchestrator;
   private readonly filesystemSynchronizer: FilesystemSynchronizer;
 
-  private constructor(dir: string, config: ReservoirConfig) {
-    this.dir = dir;
-    this.config = config;
-    this.idAllocator = ContentIdAllocator.forReservoir(dir);
+  constructor(dir: string) {
+    this.dir = path.resolve(dir);
+    this.config = {};
+    this.idAllocator = ContentIdAllocator.forReservoir(this.dir);
     this.channelController = new ChannelControllerImpl(this.dir);
     this.contentController = new ContentControllerImpl(this.channelController, this.dir);
     this.lockController = new LockControllerImpl(this.channelController);
@@ -56,8 +56,8 @@ export class ReservoirImpl implements Reservoir {
    * Initialize a new reservoir at the given directory.
    * Creates the directory if it doesn't exist.
    */
-  static initialize(dir: string, options: { maxSizeMB?: number } = {}): ReservoirImpl {
-    const absDir = path.resolve(dir);
+  initialize(options: { maxSizeMB?: number } = {}): ReservoirImpl {
+    const absDir = this.dir;
     if (!fs.existsSync(absDir)) {
       fs.mkdirSync(absDir, { recursive: true });
     }
@@ -67,20 +67,21 @@ export class ReservoirImpl implements Reservoir {
     }
     fs.writeFileSync(path.join(absDir, CONFIG_FILE), JSON.stringify(config, null, 2));
     fs.mkdirSync(path.join(absDir, RES_METADATA_DIR, CHANNELS_DIR), { recursive: true });
-    return new ReservoirImpl(absDir, config);
+    this.config = config;
+    return this;
   }
 
   /**
    * Load an existing reservoir from the given directory.
    */
-  static load(dir: string): ReservoirImpl {
-    const absDir = path.resolve(dir);
+  load(): ReservoirImpl {
+    const absDir = this.dir;
     const configPath = path.join(absDir, CONFIG_FILE);
     if (!fs.existsSync(configPath)) {
       throw new Error(`No reservoir found at ${absDir}. Run 'res init' first.`);
     }
-    const config = JSON.parse(fs.readFileSync(configPath, "utf-8")) as ReservoirConfig;
-    return new ReservoirImpl(absDir, config);
+    this.config = JSON.parse(fs.readFileSync(configPath, "utf-8")) as ReservoirConfig;
+    return this;
   }
 
   /**
@@ -95,7 +96,7 @@ export class ReservoirImpl implements Reservoir {
         `No reservoir found from ${absStart} upward. Run 'res init' in this directory or pass --dir <path>.`,
       );
     }
-    return ReservoirImpl.load(nearestDir);
+    return new ReservoirImpl(nearestDir).load();
   }
 
   private static findNearestDirectory(startDir: string): string | null {

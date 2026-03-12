@@ -261,6 +261,17 @@ export class ReservoirFake implements Reservoir {
     return { ...this.state.config };
   }
 
+  initialize(options: { maxSizeMB?: number } = {}): Reservoir {
+    if (options.maxSizeMB !== undefined) {
+      this.state.config = { ...this.state.config, maxSizeMB: options.maxSizeMB };
+    }
+    return this;
+  }
+
+  load(): Reservoir {
+    return this;
+  }
+
   async setMaxSizeMB(maxSizeMB: number): Promise<ReservoirConfig> {
     this.state.config = { ...this.state.config, maxSizeMB };
     return this.reservoirConfig;

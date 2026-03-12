@@ -50,6 +50,8 @@ export interface Reservoir {
   readonly directory: string;
   readonly reservoirConfig: ReservoirConfig;
   readonly customFetchersDirectory: string;
+  initialize(options?: { maxSizeMB?: number }): Reservoir;
+  load(): Reservoir;
   setMaxSizeMB(maxSizeMB: number): Promise<ReservoirConfig>;
   addFetcher(executablePath: string): { name: string; destinationPath: string };
   fetchChannel(channelId: string): Promise<ContentItem[]>;

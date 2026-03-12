@@ -293,7 +293,7 @@ export async function runBackgroundFetcherLoop(
 
   process.env.RES_LOG_LEVEL = activeLogLevel;
 
-  const reservoir = ReservoirImpl.load(absDir);
+  const reservoir = new ReservoirImpl(absDir).load();
   await reservoir.syncContentTracking();
 
   const existing = readBackgroundFetcherStatusFile(absDir);

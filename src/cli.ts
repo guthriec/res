@@ -33,7 +33,7 @@ function getGlobalDir(): string | undefined {
 
 function loadReservoir(dir?: string): ReservoirImpl {
   if (dir && dir.trim().length > 0) {
-    return ReservoirImpl.load(path.resolve(dir));
+    return new ReservoirImpl(path.resolve(dir)).load();
   }
   return ReservoirImpl.loadNearest(process.cwd());
 }
@@ -85,7 +85,7 @@ program
   .action((opts: { maxSize?: string }) => {
     const dir = getGlobalDir() ?? process.cwd();
     const maxSizeMB = parsePositiveNumber(opts.maxSize, "max-size");
-    ReservoirImpl.initialize(dir, { maxSizeMB });
+    new ReservoirImpl(dir).initialize({ maxSizeMB });
     console.log(`Initialized reservoir at ${path.resolve(dir)}`);
   });
 
@@ -243,8 +243,11 @@ retainCmd
   .option("--from <id>", "start from this ID (inclusive)")
   .option("--to <id>", "up to this ID (inclusive)")
   .option("--channel <id>", "restrict to this channel")
-  .action(async
-    (lockName: string | undefined, opts: { from?: string; to?: string; channel?: string }) => {
+  .action(
+    async (
+      lockName: string | undefined,
+      opts: { from?: string; to?: string; channel?: string },
+    ) => {
       if (!opts.from && !opts.to) {
         console.error("Error: Must specify at least --from or --to");
         process.exit(1);
@@ -283,8 +286,11 @@ releaseCmd
   .option("--from <id>", "start from this ID (inclusive)")
   .option("--to <id>", "up to this ID (inclusive)")
   .option("--channel <id>", "restrict to this channel")
-  .action(async
-    (lockName: string | undefined, opts: { from?: string; to?: string; channel?: string }) => {
+  .action(
+    async (
+      lockName: string | undefined,
+      opts: { from?: string; to?: string; channel?: string },
+    ) => {
       if (!opts.from && !opts.to) {
         console.error("Error: Must specify at least --from or --to");
         process.exit(1);

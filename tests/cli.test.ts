@@ -26,7 +26,7 @@ afterEach(() => {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function makeReservoir(): ReservoirImpl {
-  return ReservoirImpl.initialize(tmpDir);
+  return new ReservoirImpl(tmpDir).initialize();
 }
 
 function channelDirForId(channelId: string): string {
