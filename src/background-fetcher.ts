@@ -244,7 +244,7 @@ export async function runScheduledFetchTick(
     state.lastAttemptAtByChannel[channel.id] = new Date(nowMs).toISOString();
     try {
       const result = await reservoir.fetchChannel(channel.id);
-      state.lastFetchAtByChannel[channel.id] = new Date().toISOString();
+      state.lastFetchAtByChannel[channel.id] = new Date(nowMs).toISOString();
       delete state.lastErrorByChannel[channel.id];
       hooks.onFetchSuccess?.(channel.id, getItemCount(result));
     } catch (err) {
@@ -260,10 +260,11 @@ export function createBackgroundFetcherState(existing?: {
   lastFetchAtByChannel?: Record<string, string>;
   lastErrorByChannel?: Record<string, string>;
 }): BackgroundFetcherState {
+  const lastFetchAtByChannel = existing?.lastFetchAtByChannel ?? {};
   return {
     startedAt: existing?.startedAt ?? new Date().toISOString(),
-    lastFetchAtByChannel: existing?.lastFetchAtByChannel ?? {},
-    lastAttemptAtByChannel: {},
+    lastFetchAtByChannel,
+    lastAttemptAtByChannel: { ...lastFetchAtByChannel },
     lastErrorByChannel: existing?.lastErrorByChannel ?? {},
   };
 }

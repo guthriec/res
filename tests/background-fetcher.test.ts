@@ -293,6 +293,33 @@ describe("runScheduledFetchTick", () => {
     expect(fetchChannel).toHaveBeenCalledTimes(2);
     expect(restartedState.lastErrorByChannel.scheduled).toBeUndefined();
   });
+
+  it("does not fetch immediately after restart when channel is not stale", async () => {
+    const fetchChannel = vi.fn().mockResolvedValue([]);
+
+    const reservoir = {
+      listChannels: () => [mkChannel({ id: "scheduled", refreshInterval: 10 })],
+      fetchChannel,
+    };
+
+    const t0 = new Date("2026-01-01T00:00:00.000Z").getTime();
+    const firstRunState = createBackgroundFetcherState();
+
+    await runScheduledFetchTick(reservoir, firstRunState, t0);
+    expect(fetchChannel).toHaveBeenCalledTimes(1);
+
+    const restartedState = createBackgroundFetcherState({
+      startedAt: firstRunState.startedAt,
+      lastFetchAtByChannel: firstRunState.lastFetchAtByChannel,
+      lastErrorByChannel: firstRunState.lastErrorByChannel,
+    });
+
+    await runScheduledFetchTick(reservoir, restartedState, t0 + 1000);
+    expect(fetchChannel).toHaveBeenCalledTimes(1);
+
+    await runScheduledFetchTick(reservoir, restartedState, t0 + 10000);
+    expect(fetchChannel).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("startBackgroundFetcher / stopBackgroundFetcher / getBackgroundFetcherStatus", () => {
