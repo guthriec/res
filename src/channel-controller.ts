@@ -12,6 +12,8 @@ import { normalizeFetchParams } from "./fetch-params";
 import { InputNormalizer } from "./input-normalizer";
 import { ContentLockState, ParsedContentFile } from "./reservoir-internal-types";
 import { RelativePathHelper } from "./relative-path-helper";
+import { writeJSONAtomic, writeJSONAtomicSync } from "./atomic-writes";
+import { ContentParser } from "./content-parser";
 import type { ChannelController } from "./interfaces";
 
 const RES_METADATA_DIR = ".res";
@@ -113,9 +115,9 @@ export class ChannelControllerImpl implements ChannelController {
 
     if (needsWrite) {
       const migrated = { items: lockStateItems };
-      fs.writeFileSync(
+      writeJSONAtomicSync(
         path.join(this.resolveChannelDir(channelId), CHANNEL_METADATA_FILE),
-        JSON.stringify(migrated, null, 2),
+        migrated,
       );
       return migrated;
     }
@@ -124,18 +126,18 @@ export class ChannelControllerImpl implements ChannelController {
   }
 
   saveMetadata(channelId: string, metadata: { items: ContentLockState[] }): Promise<void> {
-    return fs.promises.writeFile(
+    return writeJSONAtomic(
       path.join(this.resolveChannelDir(channelId), CHANNEL_METADATA_FILE),
-      JSON.stringify(metadata, null, 2),
+      metadata,
     );
   }
 
   removeFromMetadata(channelId: string, contentId: string): void {
     const metadata = this.loadMetadata(channelId);
     metadata.items = metadata.items.filter((item) => item.id !== contentId);
-    fs.writeFileSync(
+    writeJSONAtomicSync(
       path.join(this.resolveChannelDir(channelId), CHANNEL_METADATA_FILE),
-      JSON.stringify(metadata, null, 2),
+      metadata,
     );
   }
 
@@ -161,6 +163,38 @@ export class ChannelControllerImpl implements ChannelController {
     return parsedById;
   }
 
+  getContentByUrl(channelId: string, url: string): { content: string } | undefined {
+    const contentDir = this.resolveChannelContentRoot(channelId);
+    if (!fs.existsSync(contentDir)) return undefined;
+
+    try {
+      const files = fs.readdirSync(contentDir);
+      for (const file of files) {
+        if (!file.endsWith(".md")) continue;
+        const filePath = path.join(contentDir, file);
+        try {
+          const content = fs.readFileSync(filePath, "utf-8");
+          const fields = ContentParser.parseInlineFrontmatter(content);
+          const itemUrl = fields.url?.trim();
+          if (itemUrl === url) {
+            return { content };
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          throw new Error(
+            `Failed to inspect content file ${filePath} for channel ${channelId}: ${message}`,
+          );
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `Failed to resolve existing content by URL in channel ${channelId}: ${message}`,
+      );
+    }
+    return undefined;
+  }
+
   resolveChannelContentRoot(channelId: string): string {
     return path.join(this.directory, channelId);
   }
@@ -184,7 +218,7 @@ export class ChannelControllerImpl implements ChannelController {
           return directPath;
         }
       } catch {
-        // fall back to directory scan
+        // fall through to directory scan
       }
     }
 
@@ -233,14 +267,8 @@ export class ChannelControllerImpl implements ChannelController {
 
     const channelDir = path.join(channelsDir, channelDirName);
     await fs.promises.mkdir(channelDir, { recursive: true });
-    await fs.promises.writeFile(
-      path.join(channelDir, CHANNEL_CONFIG_FILE),
-      JSON.stringify(channel, null, 2),
-    );
-    await fs.promises.writeFile(
-      path.join(channelDir, CHANNEL_METADATA_FILE),
-      JSON.stringify({ items: [] }, null, 2),
-    );
+    await writeJSONAtomic(path.join(channelDir, CHANNEL_CONFIG_FILE), channel);
+    await writeJSONAtomic(path.join(channelDir, CHANNEL_METADATA_FILE), { items: [] });
     return channel;
   }
 
@@ -262,10 +290,7 @@ export class ChannelControllerImpl implements ChannelController {
     }
     const updated: Channel = InputNormalizer.channel({ ...existing, ...normalizedUpdates });
     const channelDir = this.resolveChannelDir(channelId);
-    await fs.promises.writeFile(
-      path.join(channelDir, CHANNEL_CONFIG_FILE),
-      JSON.stringify(updated, null, 2),
-    );
+    await writeJSONAtomic(path.join(channelDir, CHANNEL_CONFIG_FILE), updated);
     return updated;
   }
 
@@ -284,7 +309,7 @@ export class ChannelControllerImpl implements ChannelController {
       rawChannel.refreshInterval !== channel.refreshInterval ||
       rawChannel.fetchArgs !== undefined
     ) {
-      fs.writeFileSync(configPath, JSON.stringify(channel, null, 2));
+      writeJSONAtomicSync(configPath, channel);
     }
     return channel;
   }
@@ -307,7 +332,7 @@ export class ChannelControllerImpl implements ChannelController {
             rawChannel.refreshInterval !== channel.refreshInterval ||
             rawChannel.fetchArgs !== undefined
           ) {
-            fs.writeFileSync(configPath, JSON.stringify(channel, null, 2));
+            writeJSONAtomicSync(configPath, channel);
           }
           return [channel];
         } catch {

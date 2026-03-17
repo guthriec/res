@@ -1,13 +1,13 @@
 export enum FetchMethod {
-  RSS = 'rss',
-  WebPage = 'web_page',
+  RSS = "rss",
+  WebPage = "web_page",
 }
 
 export const DEFAULT_REFRESH_INTERVAL_SECONDS = 24 * 60 * 60;
-export const GLOBAL_LOCK_NAME = '[global]';
-export const DEFAULT_DUPLICATE_STRATEGY = 'keep-both' as const;
+export const GLOBAL_LOCK_NAME = "[global]";
+export const DEFAULT_DUPLICATE_STRATEGY = "keep-both" as const;
 
-export type DuplicateStrategy = 'overwrite' | 'keep-both';
+export type DuplicateStrategy = "overwrite" | "keep-both";
 
 export interface ReservoirConfig {
   maxSizeMB?: number;
@@ -31,7 +31,7 @@ export interface ChannelConfig {
   retainedLocks?: string[];
 }
 
-export interface Channel extends Omit<ChannelConfig, 'refreshInterval' | 'retainedLocks'> {
+export interface Channel extends Omit<ChannelConfig, "refreshInterval" | "retainedLocks"> {
   id: string;
   createdAt: string;
   refreshInterval: number;

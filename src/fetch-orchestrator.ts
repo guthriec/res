@@ -35,7 +35,6 @@ interface FetchOrchestratorDependencies {
 }
 
 export class FetchOrchestrator {
-  private readonly reservoirDir: string;
   private readonly customFetchersDirectory: string;
   private readonly idAllocator: ContentIdAllocator;
   private readonly channelController: ChannelControllerImpl;
@@ -43,7 +42,6 @@ export class FetchOrchestrator {
   private readonly relativePathHelper: RelativePathHelper;
 
   constructor(deps: FetchOrchestratorDependencies) {
-    this.reservoirDir = deps.reservoirDir;
     this.customFetchersDirectory = deps.customFetchersDirectory;
     this.idAllocator = deps.idAllocator;
     this.channelController = deps.channelController;
@@ -57,7 +55,23 @@ export class FetchOrchestrator {
     const channel = this.channelController.viewChannel(channelId);
     const fetchParams = channel.fetchParams;
     const fetcher = this.resolveFetcher(channel.fetchMethod);
-    const fetched: FetchedContent[] = await fetcher.fetch(fetchParams, channelId);
+
+    // Lazy resolver: delegates content lookup to the channel controller
+    const resolveExistingContent = (url: string) => {
+      try {
+        return this.channelController.getContentByUrl(channelId, url);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error(
+          `[orchestrator] failed to resolve existing content for channel ${channelId} (${url}): ${message}`,
+        );
+        return undefined;
+      }
+    };
+
+    const fetched: FetchedContent[] = await fetcher.fetch(fetchParams, channelId, {
+      resolveExistingContent,
+    });
 
     const metadata = this.channelController.loadMetadata(channelId);
     const contentRoot = this.channelController.resolveChannelContentRoot(channelId);

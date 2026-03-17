@@ -1,11 +1,11 @@
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
-import { execFile } from 'child_process';
-import { promisify } from 'util';
-import { FetchedContent } from '../types';
-import { fetchParamObjectToCliArgs } from '../fetch-params';
-import { Fetcher } from './types';
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
+import { execFile } from "child_process";
+import { promisify } from "util";
+import { FetchedContent } from "../types";
+import { fetchParamObjectToCliArgs } from "../fetch-params";
+import { Fetcher } from "./types";
 
 const execFileAsync = promisify(execFile);
 
@@ -18,16 +18,18 @@ function listMarkdownItems(outsDir: string): DiscoveredItem[] {
   if (!fs.existsSync(outsDir)) return [];
   return fs
     .readdirSync(outsDir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith('.md'))
+    .filter((entry) => entry.isFile() && entry.name.toLowerCase().endsWith(".md"))
     .map((entry) => ({
       markdownPath: path.join(outsDir, entry.name),
       sourceFileName: entry.name,
     }));
 }
 
-function collectSupplementaryFiles(resourcesRoot: string): Array<{ relativePath: string; content: Buffer }> {
+function collectSupplementaryFiles(
+  resourcesRoot: string,
+): Array<{ relativePath: string; content: Buffer }> {
   const files: Array<{ relativePath: string; content: Buffer }> = [];
-  const stack: string[] = [''];
+  const stack: string[] = [""];
 
   while (stack.length > 0) {
     const relativeDir = stack.pop()!;
@@ -61,8 +63,8 @@ export async function fetchCustom(
     throw new Error(`Custom fetcher not found: ${executableAbsolutePath}`);
   }
 
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'res-fetch-custom-'));
-  const outsDir = path.join(tempDir, 'outs');
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "res-fetch-custom-"));
+  const outsDir = path.join(tempDir, "outs");
   fs.mkdirSync(outsDir, { recursive: true });
 
   try {
@@ -75,14 +77,16 @@ export async function fetchCustom(
     });
 
     const items = listMarkdownItems(outsDir).map((entry) => {
-      const content = fs.readFileSync(entry.markdownPath, 'utf-8');
-      const stem = path.basename(entry.sourceFileName, '.md') || 'content';
+      const content = fs.readFileSync(entry.markdownPath, "utf-8");
+      const stem = path.basename(entry.sourceFileName, ".md") || "content";
       const resourceDir = path.join(outsDir, stem);
 
       return {
         content,
         sourceFileName: entry.sourceFileName,
-        supplementaryFiles: fs.existsSync(resourceDir) ? collectSupplementaryFiles(resourceDir) : [],
+        supplementaryFiles: fs.existsSync(resourceDir)
+          ? collectSupplementaryFiles(resourceDir)
+          : [],
       };
     });
 
@@ -94,7 +98,7 @@ export async function fetchCustom(
 
 export function createCustomFetcher(executablePath: string): Fetcher {
   return {
-    fetch(fetchParams, channelId) {
+    fetch(fetchParams, channelId, _options?: any) {
       return fetchCustom(executablePath, channelId, fetchParams);
     },
   };
