@@ -2,14 +2,14 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import {
-  type BackgroundFetcherState,
-  getBackgroundFetcherStatus,
-  readBackgroundFetcherStatusFile,
-  runBackgroundFetcherCycle,
-  runScheduledFetchTick,
-  startBackgroundFetcher,
-  stopBackgroundFetcher,
-} from "../src/background-fetcher";
+  type BackgroundFetchWorkerState,
+  getBackgroundFetchWorkerStatus,
+  readBackgroundFetchWorkerStatusFile,
+  runBackgroundFetchWorkerStep,
+  runScheduledFetchStep,
+  startBackgroundFetchWorker,
+  stopBackgroundFetchWorker,
+} from "../src/background-fetch-worker";
 import { ReservoirImpl as Reservoir } from "../src/reservoir";
 import { Channel, DEFAULT_REFRESH_INTERVAL_SECONDS, FetchMethod } from "../src/types";
 
@@ -38,7 +38,7 @@ function mkChannel(overrides: Partial<Channel> = {}): Channel {
   };
 }
 
-describe("runScheduledFetchTick", () => {
+describe("runScheduledFetchStep", () => {
   it("runs a registered custom fetcher end-to-end and persists output", async () => {
     const reservoir = new Reservoir(tmpDir).initialize();
     const fetcherBaseName = `custom-fetcher-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -85,13 +85,13 @@ describe("runScheduledFetchTick", () => {
     });
 
     const t0 = new Date("2026-01-01T00:00:00.000Z").getTime();
-    const state: BackgroundFetcherState = {
+    const state: BackgroundFetchWorkerState = {
       startedAt: new Date(t0).toISOString(),
       lastFetchAtByChannel: {},
       lastAttemptAtByChannel: {},
       lastErrorByChannel: {},
     };
-    await runScheduledFetchTick(reservoir, state, t0);
+    await runScheduledFetchStep(reservoir, state, t0);
 
     const items = reservoir.contentController.listContent({
       channelIds: [channel.id],
@@ -116,13 +116,13 @@ describe("runScheduledFetchTick", () => {
     };
 
     const t0 = new Date("2026-01-01T00:00:00.000Z").getTime();
-    const state: BackgroundFetcherState = {
+    const state: BackgroundFetchWorkerState = {
       startedAt: new Date(t0).toISOString(),
       lastFetchAtByChannel: {},
       lastAttemptAtByChannel: {},
       lastErrorByChannel: {},
     };
-    await runScheduledFetchTick(reservoir, state, t0);
+    await runScheduledFetchStep(reservoir, state, t0);
 
     expect(fetchChannel).toHaveBeenCalledTimes(1);
     expect(fetchChannel).toHaveBeenCalledWith("scheduled");
@@ -137,15 +137,15 @@ describe("runScheduledFetchTick", () => {
     };
 
     const t0 = new Date("2026-01-01T00:00:00.000Z").getTime();
-    const state: BackgroundFetcherState = {
+    const state: BackgroundFetchWorkerState = {
       startedAt: new Date(t0).toISOString(),
       lastFetchAtByChannel: {},
       lastAttemptAtByChannel: {},
       lastErrorByChannel: {},
     };
 
-    await runScheduledFetchTick(reservoir, state, t0);
-    await runScheduledFetchTick(reservoir, state, t0 + 1000);
+    await runScheduledFetchStep(reservoir, state, t0);
+    await runScheduledFetchStep(reservoir, state, t0 + 1000);
 
     expect(fetchChannel).toHaveBeenCalledTimes(1);
     expect(fetchChannel).toHaveBeenCalledWith("unscheduled");
@@ -159,15 +159,15 @@ describe("runScheduledFetchTick", () => {
     };
 
     const t0 = new Date("2026-01-01T00:00:00.000Z").getTime();
-    const state: BackgroundFetcherState = {
+    const state: BackgroundFetchWorkerState = {
       startedAt: new Date(t0).toISOString(),
       lastFetchAtByChannel: {},
       lastAttemptAtByChannel: {},
       lastErrorByChannel: {},
     };
-    await runScheduledFetchTick(reservoir, state, t0);
-    await runScheduledFetchTick(reservoir, state, t0 + 500);
-    await runScheduledFetchTick(reservoir, state, t0 + 1000);
+    await runScheduledFetchStep(reservoir, state, t0);
+    await runScheduledFetchStep(reservoir, state, t0 + 500);
+    await runScheduledFetchStep(reservoir, state, t0 + 1000);
 
     expect(fetchChannel).toHaveBeenCalledTimes(2);
   });
@@ -181,17 +181,17 @@ describe("runScheduledFetchTick", () => {
     };
 
     const t0 = new Date("2026-01-01T00:00:00.000Z").getTime();
-    const state: BackgroundFetcherState = {
+    const state: BackgroundFetchWorkerState = {
       startedAt: new Date(t0).toISOString(),
       lastFetchAtByChannel: {},
       lastAttemptAtByChannel: {},
       lastErrorByChannel: {},
     };
 
-    await runScheduledFetchTick(reservoir, state, t0);
+    await runScheduledFetchStep(reservoir, state, t0);
     expect(state.lastErrorByChannel.scheduled).toBe("boom");
 
-    await runScheduledFetchTick(reservoir, state, t0 + 1000);
+    await runScheduledFetchStep(reservoir, state, t0 + 1000);
     expect(state.lastErrorByChannel.scheduled).toBeUndefined();
   });
 
@@ -206,21 +206,21 @@ describe("runScheduledFetchTick", () => {
     };
 
     const t0 = new Date("2026-01-01T00:00:00.000Z").getTime();
-    const state: BackgroundFetcherState = {
+    const state: BackgroundFetchWorkerState = {
       startedAt: new Date(t0).toISOString(),
       lastFetchAtByChannel: {},
       lastAttemptAtByChannel: {},
       lastErrorByChannel: {},
     };
 
-    await runScheduledFetchTick(reservoir, state, t0);
+    await runScheduledFetchStep(reservoir, state, t0);
     expect(state.lastErrorByChannel.scheduled).toBe("boom");
 
-    await runScheduledFetchTick(reservoir, state, t0 + 9000);
+    await runScheduledFetchStep(reservoir, state, t0 + 9000);
     expect(fetchChannel).toHaveBeenCalledTimes(1);
     expect(state.lastErrorByChannel.scheduled).toBe("boom");
 
-    await runScheduledFetchTick(reservoir, state, t0 + 10000);
+    await runScheduledFetchStep(reservoir, state, t0 + 10000);
     expect(fetchChannel).toHaveBeenCalledTimes(2);
     expect(state.lastErrorByChannel.scheduled).toBeUndefined();
   });
@@ -236,24 +236,24 @@ describe("runScheduledFetchTick", () => {
     };
 
     const t0 = new Date("2026-01-01T00:00:00.000Z").getTime();
-    const state: BackgroundFetcherState = {
+    const state: BackgroundFetchWorkerState = {
       startedAt: new Date(t0).toISOString(),
       lastFetchAtByChannel: {},
       lastAttemptAtByChannel: {},
       lastErrorByChannel: {},
     };
 
-    await runScheduledFetchTick(reservoir, state, t0);
+    await runScheduledFetchStep(reservoir, state, t0);
     expect(state.lastErrorByChannel.scheduled).toBe("boom");
 
-    await runScheduledFetchTick(reservoir, state, t0 + 3000);
+    await runScheduledFetchStep(reservoir, state, t0 + 3000);
     expect(fetchChannel).toHaveBeenCalledTimes(1);
     expect(state.lastErrorByChannel.scheduled).toBe("boom");
 
-    await runScheduledFetchTick(reservoir, state, t0 + 9999);
+    await runScheduledFetchStep(reservoir, state, t0 + 9999);
     expect(fetchChannel).toHaveBeenCalledTimes(1);
 
-    await runScheduledFetchTick(reservoir, state, t0 + 10000);
+    await runScheduledFetchStep(reservoir, state, t0 + 10000);
     expect(fetchChannel).toHaveBeenCalledTimes(2);
     expect(state.lastErrorByChannel.scheduled).toBeUndefined();
   });
@@ -269,24 +269,24 @@ describe("runScheduledFetchTick", () => {
     };
 
     const t0 = new Date("2026-01-01T00:00:00.000Z").getTime();
-    const firstRunState: BackgroundFetcherState = {
+    const firstRunState: BackgroundFetchWorkerState = {
       startedAt: new Date(t0).toISOString(),
       lastFetchAtByChannel: {},
       lastAttemptAtByChannel: {},
       lastErrorByChannel: {},
     };
 
-    await runScheduledFetchTick(reservoir, firstRunState, t0);
+    await runScheduledFetchStep(reservoir, firstRunState, t0);
     expect(firstRunState.lastErrorByChannel.scheduled).toBe("boom");
 
-    const restartedState: BackgroundFetcherState = {
+    const restartedState: BackgroundFetchWorkerState = {
       startedAt: firstRunState.startedAt,
       lastFetchAtByChannel: firstRunState.lastFetchAtByChannel,
       lastAttemptAtByChannel: { ...firstRunState.lastFetchAtByChannel },
       lastErrorByChannel: firstRunState.lastErrorByChannel,
     };
 
-    await runScheduledFetchTick(reservoir, restartedState, t0 + 1000);
+    await runScheduledFetchStep(reservoir, restartedState, t0 + 1000);
 
     expect(fetchChannel).toHaveBeenCalledTimes(2);
     expect(restartedState.lastErrorByChannel.scheduled).toBeUndefined();
@@ -303,18 +303,18 @@ describe("runScheduledFetchTick", () => {
     };
 
     const t0 = new Date("2026-01-01T00:00:00.000Z").getTime();
-    const firstRunState: BackgroundFetcherState = {
+    const firstRunState: BackgroundFetchWorkerState = {
       startedAt: new Date(t0).toISOString(),
       lastFetchAtByChannel: {},
       lastAttemptAtByChannel: {},
       lastErrorByChannel: {},
     };
 
-    await runBackgroundFetcherCycle(tmpDir, reservoir, firstRunState, t0);
+    await runBackgroundFetchWorkerStep(tmpDir, reservoir, firstRunState, t0);
     expect(firstRunState.lastErrorByChannel.scheduled).toBe("boom");
 
-    const existing = readBackgroundFetcherStatusFile(tmpDir);
-    const restartedState: BackgroundFetcherState = {
+    const existing = readBackgroundFetchWorkerStatusFile(tmpDir);
+    const restartedState: BackgroundFetchWorkerState = {
       startedAt: existing?.startedAt ?? new Date(t0).toISOString(),
       lastFetchAtByChannel: existing?.lastFetchAtByChannel ?? {},
       lastAttemptAtByChannel: existing?.lastFetchAtByChannel
@@ -323,7 +323,7 @@ describe("runScheduledFetchTick", () => {
       lastErrorByChannel: existing?.lastErrorByChannel ?? {},
     };
 
-    await runScheduledFetchTick(reservoir, restartedState, t0 + 1000);
+    await runScheduledFetchStep(reservoir, restartedState, t0 + 1000);
 
     expect(fetchChannel).toHaveBeenCalledTimes(2);
     expect(restartedState.lastErrorByChannel.scheduled).toBeUndefined();
@@ -338,27 +338,27 @@ describe("runScheduledFetchTick", () => {
     };
 
     const t0 = new Date("2026-01-01T00:00:00.000Z").getTime();
-    const firstRunState: BackgroundFetcherState = {
+    const firstRunState: BackgroundFetchWorkerState = {
       startedAt: new Date(t0).toISOString(),
       lastFetchAtByChannel: {},
       lastAttemptAtByChannel: {},
       lastErrorByChannel: {},
     };
 
-    await runScheduledFetchTick(reservoir, firstRunState, t0);
+    await runScheduledFetchStep(reservoir, firstRunState, t0);
     expect(fetchChannel).toHaveBeenCalledTimes(1);
 
-    const restartedState: BackgroundFetcherState = {
+    const restartedState: BackgroundFetchWorkerState = {
       startedAt: firstRunState.startedAt,
       lastFetchAtByChannel: firstRunState.lastFetchAtByChannel,
       lastAttemptAtByChannel: { ...firstRunState.lastFetchAtByChannel },
       lastErrorByChannel: firstRunState.lastErrorByChannel,
     };
 
-    await runScheduledFetchTick(reservoir, restartedState, t0 + 1000);
+    await runScheduledFetchStep(reservoir, restartedState, t0 + 1000);
     expect(fetchChannel).toHaveBeenCalledTimes(1);
 
-    await runScheduledFetchTick(reservoir, restartedState, t0 + 10000);
+    await runScheduledFetchStep(reservoir, restartedState, t0 + 10000);
     expect(fetchChannel).toHaveBeenCalledTimes(2);
   });
 
@@ -375,27 +375,27 @@ describe("runScheduledFetchTick", () => {
     const t0 = new Date("2026-01-01T00:00:00.000Z").getTime();
 
     // WHEN - first cycle
-    const state1: BackgroundFetcherState = {
+    const state1: BackgroundFetchWorkerState = {
       startedAt: new Date(t0).toISOString(),
       lastFetchAtByChannel: {},
       lastAttemptAtByChannel: {},
       lastErrorByChannel: {},
     };
-    await runBackgroundFetcherCycle(tmpDir, realReservoir, state1, t0);
+    await runBackgroundFetchWorkerStep(tmpDir, realReservoir, state1, t0);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
 
     // Short interval later - should NOT fetch
-    const state2: BackgroundFetcherState = {
+    const state2: BackgroundFetchWorkerState = {
       startedAt: state1.startedAt,
       lastFetchAtByChannel: state1.lastFetchAtByChannel,
       lastAttemptAtByChannel: { ...state1.lastFetchAtByChannel },
       lastErrorByChannel: state1.lastErrorByChannel,
     };
-    await runScheduledFetchTick(realReservoir, state2, t0 + 1000);
+    await runScheduledFetchStep(realReservoir, state2, t0 + 1000);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
 
     // THEN - after interval expires, should fetch again
-    await runScheduledFetchTick(realReservoir, state2, t0 + 10000);
+    await runScheduledFetchStep(realReservoir, state2, t0 + 10000);
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
@@ -412,20 +412,20 @@ describe("runScheduledFetchTick", () => {
     const t0 = new Date("2026-01-01T00:00:00.000Z").getTime();
 
     // WHEN - first start cycle
-    const state1: BackgroundFetcherState = {
+    const state1: BackgroundFetchWorkerState = {
       startedAt: new Date(t0).toISOString(),
       lastFetchAtByChannel: {},
       lastAttemptAtByChannel: {},
       lastErrorByChannel: {},
     };
-    await runBackgroundFetcherCycle(tmpDir, realReservoir, state1, t0);
+    await runBackgroundFetchWorkerStep(tmpDir, realReservoir, state1, t0);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
 
     // Simulate restart shortly after: load persisted state
-    const persisted = readBackgroundFetcherStatusFile(tmpDir);
+    const persisted = readBackgroundFetchWorkerStatusFile(tmpDir);
     expect(persisted?.lastFetchAtByChannel).toBeDefined();
 
-    const state2: BackgroundFetcherState = {
+    const state2: BackgroundFetchWorkerState = {
       startedAt: persisted?.startedAt ?? new Date(t0).toISOString(),
       lastFetchAtByChannel: persisted?.lastFetchAtByChannel ?? {},
       lastAttemptAtByChannel: persisted?.lastFetchAtByChannel
@@ -435,34 +435,50 @@ describe("runScheduledFetchTick", () => {
     };
 
     // THEN - second cycle shortly after should NOT fetch again
-    await runBackgroundFetcherCycle(tmpDir, realReservoir, state2, t0 + 1000);
+    await runBackgroundFetchWorkerStep(tmpDir, realReservoir, state2, t0 + 1000);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
 
     // But after interval expires, should fetch
-    await runBackgroundFetcherCycle(tmpDir, realReservoir, state2, t0 + 10000);
+    await runBackgroundFetchWorkerStep(tmpDir, realReservoir, state2, t0 + 10000);
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 });
 
-describe("startBackgroundFetcher / stopBackgroundFetcher / getBackgroundFetcherStatus", () => {
-  it("start writes pid file and runs provided loop in-process", async () => {
-    const runner = vi.fn().mockResolvedValue(undefined);
+describe("startBackgroundFetchWorker / stopBackgroundFetchWorker / getBackgroundFetchWorkerStatus", () => {
+  it("start writes pid file and can be stopped through the public API", async () => {
+    new Reservoir(tmpDir).initialize();
 
-    await startBackgroundFetcher(tmpDir, { runner });
+    const startPromise = startBackgroundFetchWorker(tmpDir, {
+      tickIntervalMs: 10,
+      logLevel: "silent",
+      logger: () => undefined,
+      errorLogger: () => undefined,
+    });
 
-    expect(runner).toHaveBeenCalledTimes(1);
-    expect(runner).toHaveBeenCalledWith(path.resolve(tmpDir), {});
     const pidFile = path.join(tmpDir, ".res-fetcher.pid");
+    const statusFile = path.join(tmpDir, ".res-fetcher-status.json");
+    for (let i = 0; i < 20 && !fs.existsSync(pidFile); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    for (let i = 0; i < 20 && !fs.existsSync(statusFile); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
     expect(fs.existsSync(pidFile)).toBe(true);
+    expect(fs.existsSync(statusFile)).toBe(true);
     expect(fs.readFileSync(pidFile, "utf-8").trim()).toBe(String(process.pid));
+
+    const result = stopBackgroundFetchWorker(tmpDir);
+    expect(result.stopped).toBe(true);
+
+    await startPromise;
+    expect(fs.existsSync(pidFile)).toBe(false);
   });
 
   it("start throws when an existing fetcher pid is running", async () => {
     fs.writeFileSync(path.join(tmpDir, ".res-fetcher.pid"), `${process.pid}\n`, "utf-8");
-    const runner = vi.fn();
 
-    await expect(startBackgroundFetcher(tmpDir, { runner })).rejects.toThrow("already running");
-    expect(runner).not.toHaveBeenCalled();
+    await expect(startBackgroundFetchWorker(tmpDir)).rejects.toThrow("already running");
   });
 
   it("status returns running=true when pid exists and process is alive", () => {
@@ -483,27 +499,25 @@ describe("startBackgroundFetcher / stopBackgroundFetcher / getBackgroundFetcherS
       "utf-8",
     );
 
-    const status = getBackgroundFetcherStatus(tmpDir);
+    const status = getBackgroundFetchWorkerStatus(tmpDir);
 
     expect(status.running).toBe(true);
     expect(status.pid).toBe(process.pid);
     expect(status.lastFetchAtByChannel?.a).toBe("2026-01-01T00:00:00.500Z");
   });
 
-  it("stop sends SIGTERM and clears pid file", () => {
+  it("stop clears pid file when a running pid is present", () => {
     fs.writeFileSync(path.join(tmpDir, ".res-fetcher.pid"), `${process.pid}\n`, "utf-8");
-    const killSpy = vi.spyOn(process, "kill").mockReturnValue(true);
 
-    const result = stopBackgroundFetcher(tmpDir);
+    const result = stopBackgroundFetchWorker(tmpDir);
 
     expect(result.stopped).toBe(true);
     expect(result.pid).toBe(process.pid);
-    expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGTERM");
     expect(fs.existsSync(path.join(tmpDir, ".res-fetcher.pid"))).toBe(false);
   });
 
   it("stop returns not running when no pid file exists", () => {
-    const result = stopBackgroundFetcher(tmpDir);
+    const result = stopBackgroundFetchWorker(tmpDir);
     expect(result.stopped).toBe(false);
     expect(result.message).toContain("not running");
   });

@@ -4,10 +4,10 @@ import * as path from "path";
 import { ReservoirImpl } from "./reservoir";
 import { FetchMethod } from "./types";
 import {
-  getBackgroundFetcherStatus,
-  startBackgroundFetcher,
-  stopBackgroundFetcher,
-} from "./background-fetcher";
+  getBackgroundFetchWorkerStatus,
+  startBackgroundFetchWorker,
+  stopBackgroundFetchWorker,
+} from "./background-fetch-worker";
 import {
   buildChannelAddConfig,
   buildChannelEditUpdates,
@@ -194,7 +194,7 @@ program
   .option("--log-level <level>", "logging verbosity: error | info | debug | silent")
   .action(async (opts: { logLevel?: "error" | "info" | "debug" | "silent" }) => {
     const reservoir = loadReservoir(getGlobalDir());
-    await startBackgroundFetcher(reservoir.directory, {
+    await startBackgroundFetchWorker(reservoir.directory, {
       logLevel: opts.logLevel,
       logger: (message) => console.log(message),
       errorLogger: (message) => console.error(message),
@@ -207,7 +207,7 @@ program
   .action(() => {
     const reservoir = loadReservoir(getGlobalDir());
     const dir = reservoir.directory;
-    const status = getBackgroundFetcherStatus(dir);
+    const status = getBackgroundFetchWorkerStatus(dir);
     if (!status.running) {
       console.log("Background fetcher is not running");
       return;
@@ -221,7 +221,7 @@ program
   .action(() => {
     const reservoir = loadReservoir(getGlobalDir());
     const dir = reservoir.directory;
-    const result = stopBackgroundFetcher(dir);
+    const result = stopBackgroundFetchWorker(dir);
     console.log(result.message);
   });
 

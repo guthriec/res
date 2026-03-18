@@ -25,11 +25,11 @@ export { fetchWebPage } from "./fetchers/webpage";
 export { fetchCustom } from "./fetchers/custom";
 export type { Fetcher, FetchParams } from "./fetchers/types";
 export {
-  getBackgroundFetcherStatus,
-  startBackgroundFetcher,
-  stopBackgroundFetcher,
-  runBackgroundFetcherLoop,
-  runScheduledFetchTick,
-  createBackgroundFetcherState,
+  getBackgroundFetchWorkerStatus,
+  startBackgroundFetchWorker,
+  stopBackgroundFetchWorker,
+  runBackgroundFetchWorkerLoop,
+  runScheduledFetchStep,
+  createBackgroundFetchWorkerState,
   isProcessRunning,
-} from "./background-fetcher";
+} from "./background-fetch-worker";
