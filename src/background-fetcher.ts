@@ -269,6 +269,26 @@ export function createBackgroundFetcherState(existing?: {
   };
 }
 
+export async function runBackgroundFetcherCycle(
+  reservoirDir: string,
+  reservoir: SchedulerReservoir,
+  state: BackgroundFetcherState,
+  nowMs: number = Date.now(),
+  hooks: {
+    onFetchSuccess?: (channelId: string, itemCount: number | null) => void;
+    onFetchError?: (channelId: string, message: string) => void;
+  } = {},
+): Promise<void> {
+  await runScheduledFetchTick(reservoir, state, nowMs, hooks);
+  writeBackgroundFetcherStatusFile(path.resolve(reservoirDir), {
+    pid: process.pid,
+    startedAt: state.startedAt,
+    lastHeartbeatAt: new Date(nowMs).toISOString(),
+    lastFetchAtByChannel: state.lastFetchAtByChannel,
+    lastErrorByChannel: state.lastErrorByChannel,
+  });
+}
+
 export async function runBackgroundFetcherLoop(
   reservoirDir: string,
   options: BackgroundFetcherRuntimeOptions = {},
@@ -360,7 +380,7 @@ export async function runBackgroundFetcherLoop(
   emit("info", `Background fetcher started (pid ${process.pid})`);
 
   while (true) {
-    await runScheduledFetchTick(reservoir, state, Date.now(), {
+    await runBackgroundFetcherCycle(absDir, reservoir, state, Date.now(), {
       onFetchSuccess: (channelId, itemCount) => {
         const suffix = itemCount === null ? "" : ` (${itemCount} item(s))`;
         emit("info", `[${channelId}] fetched${suffix}`);
@@ -369,7 +389,6 @@ export async function runBackgroundFetcherLoop(
         emit("error", `[${channelId}] fetch failed: ${message}`);
       },
     });
-    persist();
     await new Promise((resolve) => setTimeout(resolve, tickIntervalMs));
   }
 }
