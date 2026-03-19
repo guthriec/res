@@ -248,6 +248,9 @@ export async function runScheduledFetchStep(
     const lastAttempt = state.lastAttemptAtByChannel[channel.id];
     if (lastAttempt) {
       const elapsed = nowMs - new Date(lastAttempt).getTime();
+      console.log(
+        `[scheduler] channel=${channel.name} lastAttempt=${lastAttempt} pollIntervalMs=${pollIntervalMs} elapsedMs=${elapsed}`,
+      );
       if (elapsed < pollIntervalMs) {
         continue;
       }

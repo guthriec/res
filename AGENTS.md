@@ -5,3 +5,4 @@
 - Do not expose internal/test-only seams in the public API solely to make tests easier.
 - Prefer testing through real public behavior and process lifecycle.
 - Avoid adding options unless there is a production use case.
+- Before finishing work, run `npm run build` in `res` and confirm it passes.

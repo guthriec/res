@@ -341,7 +341,7 @@ describe("fetchCustom", () => {
     }
 
     const { fetchCustom } = await import("../src/fetchers/custom");
-    const items = await fetchCustom(executablePath, "chan-3");
+    const items = await fetchCustom(executablePath, "chan-3", undefined);
     expect(items).toHaveLength(1);
     expect(items[0].content).toContain("# Custom Item");
     expect(items[0].sourceFileName).toBe("custom-item.md");
@@ -377,7 +377,7 @@ describe("fetchCustom", () => {
     }
 
     const { fetchCustom } = await import("../src/fetchers/custom");
-    const items = await fetchCustom(executablePath, "chan-3");
+    const items = await fetchCustom(executablePath, "chan-3", undefined);
     expect(items).toHaveLength(1);
     expect(items[0].supplementaryFiles).toBeDefined();
     expect(items[0].supplementaryFiles).toHaveLength(1);
@@ -389,7 +389,9 @@ describe("fetchCustom", () => {
     const missingPath = path.join(tmpDir, "missing-fetcher");
 
     const { fetchCustom } = await import("../src/fetchers/custom");
-    await expect(fetchCustom(missingPath, "chan-3")).rejects.toThrow("Custom fetcher not found");
+    await expect(fetchCustom(missingPath, "chan-3", undefined)).rejects.toThrow(
+      "Custom fetcher not found",
+    );
   });
 
   it("forwards fetch arguments to the custom fetcher executable", async () => {

@@ -113,12 +113,12 @@ describe("channel list output format", () => {
     const ch1 = await res.channelController.addChannel({
       name: "Tech News",
       fetchMethod: FetchMethod.RSS,
-      url: "https://example.com/rss",
+      fetchParams: { url: "https://example.com/rss" },
     });
     const ch2 = await res.channelController.addChannel({
       name: "Another Channel",
       fetchMethod: FetchMethod.RSS,
-      url: "https://example.com/rss2",
+      fetchParams: { url: "https://example.com/rss2" },
     });
 
     const channels = res.channelController.listChannels();
@@ -140,7 +140,7 @@ describe("channel list output format", () => {
     const ch = await res.channelController.addChannel({
       name: "Sample Channel",
       fetchMethod: FetchMethod.RSS,
-      url: "https://example.com/feed",
+      fetchParams: { url: "https://example.com/feed" },
     });
 
     const channels = res.channelController.listChannels();
@@ -161,7 +161,7 @@ describe("retained list output format", () => {
     const ch = await res.channelController.addChannel({
       name: "Test Channel",
       fetchMethod: FetchMethod.RSS,
-      url: "https://example.com/rss",
+      fetchParams: { url: "https://example.com/rss" },
     });
 
     // Add content to the channel
@@ -193,7 +193,7 @@ describe("retained list output format", () => {
     const ch = await res.channelController.addChannel({
       name: "News Feed",
       fetchMethod: FetchMethod.RSS,
-      url: "https://example.com/feed",
+      fetchParams: { url: "https://example.com/feed" },
     });
 
     addTestItem(ch.id, {
@@ -220,7 +220,7 @@ describe("retained list output format", () => {
     const ch = await res.channelController.addChannel({
       name: "Updates",
       fetchMethod: FetchMethod.RSS,
-      url: "https://example.com/updates",
+      fetchParams: { url: "https://example.com/updates" },
     });
 
     addTestItem(ch.id, { title: "Update 1", content: "# Update", locks: [GLOBAL_LOCK_NAME] });
@@ -247,12 +247,12 @@ describe("retained list output format", () => {
     const ch1 = await res.channelController.addChannel({
       name: "Channel One",
       fetchMethod: FetchMethod.RSS,
-      url: "https://example.com/1",
+      fetchParams: { url: "https://example.com/1" },
     });
     const ch2 = await res.channelController.addChannel({
       name: "Channel Two",
       fetchMethod: FetchMethod.RSS,
-      url: "https://example.com/2",
+      fetchParams: { url: "https://example.com/2" },
     });
 
     addTestItem(ch1.id, { title: "Item from Ch1", content: "# Ch1", locks: [GLOBAL_LOCK_NAME] });
@@ -272,7 +272,7 @@ describe("retained list output format", () => {
     const ch = await res.channelController.addChannel({
       name: "Blog",
       fetchMethod: FetchMethod.RSS,
-      url: "https://example.com/blog",
+      fetchParams: { url: "https://example.com/blog" },
     });
 
     addTestItem(ch.id, { title: "Post 1", content: "# Post 1", locks: [GLOBAL_LOCK_NAME] });

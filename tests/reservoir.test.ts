@@ -1,8 +1,16 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { ReservoirImpl as Reservoir } from "../src/reservoir";
+import { ReservoirImpl } from "../src/reservoir";
 import { FetchMethod, GLOBAL_LOCK_NAME, DEFAULT_DUPLICATE_STRATEGY } from "../src/types";
+
+type Reservoir = ReservoirImpl;
+const Reservoir = {
+  initialize: (dir: string, options: { maxSizeMB?: number } = {}): ReservoirImpl =>
+    new ReservoirImpl(dir).initialize(options),
+  load: (dir: string): ReservoirImpl => new ReservoirImpl(dir).load(),
+  loadNearest: (startDir?: string): ReservoirImpl => ReservoirImpl.loadNearest(startDir),
+};
 
 interface TestContentMetadata {
   id: string;
@@ -214,7 +222,7 @@ describe("setMaxSizeMB", () => {
     const ch = await res.channelController.addChannel({
       name: "C",
       fetchMethod: FetchMethod.RSS,
-      url: "u",
+      fetchParams: { url: "u" },
     });
     const t1 = new Date(2024, 0, 1).toISOString();
     const t2 = new Date(2024, 0, 2).toISOString();
@@ -233,7 +241,7 @@ describe("setMaxSizeMB", () => {
     const ch = await res.channelController.addChannel({
       name: "C",
       fetchMethod: FetchMethod.RSS,
-      url: "u",
+      fetchParams: { url: "u" },
     });
 
     addTestItem(res, ch.id, { id: "keep1", locks: [], content: "x".repeat(5000) });
@@ -253,7 +261,7 @@ describe("addChannel", () => {
     const ch = await res.channelController.addChannel({
       name: "Test",
       fetchMethod: FetchMethod.RSS,
-      url: "https://example.com/feed",
+      fetchParams: { url: "https://example.com/feed" },
     });
     expect(ch.id).toBeDefined();
     expect(ch.createdAt).toBeDefined();
@@ -268,7 +276,7 @@ describe("addChannel", () => {
     const ch = await res.channelController.addChannel({
       name: "Test",
       fetchMethod: FetchMethod.WebPage,
-      url: "https://example.com",
+      fetchParams: { url: "https://example.com" },
     });
     const channelDir = channelDirForId(ch.id);
     expect(fs.existsSync(path.join(channelDir, "channel.json"))).toBe(true);
@@ -280,7 +288,7 @@ describe("addChannel", () => {
     const ch = await res.channelController.addChannel({
       name: "My New Feed",
       fetchMethod: FetchMethod.RSS,
-      url: "https://example.com/feed",
+      fetchParams: { url: "https://example.com/feed" },
     });
     const channelDir = channelDirForId(ch.id);
     expect(path.basename(channelDir)).toBe("my-new-feed");
@@ -292,12 +300,12 @@ describe("addChannel", () => {
     const first = await res.channelController.addChannel({
       name: "Same Name",
       fetchMethod: FetchMethod.RSS,
-      url: "https://example.com/one",
+      fetchParams: { url: "https://example.com/one" },
     });
     const second = await res.channelController.addChannel({
       name: "Same Name",
       fetchMethod: FetchMethod.RSS,
-      url: "https://example.com/two",
+      fetchParams: { url: "https://example.com/two" },
     });
 
     expect(first.id).toBe("same-name");
@@ -307,15 +315,14 @@ describe("addChannel", () => {
 
   it("rejects retainedLocks with comma-separated names in addChannel", async () => {
     const res = makeReservoir();
-    expect(
-      () =>
-        await res.channelController.addChannel({
-          name: "Bad Locks",
-          fetchMethod: FetchMethod.RSS,
-          url: "u",
-          retainedLocks: ["bad,name"],
-        }),
-    ).toThrow("commas are not allowed");
+    await expect(
+      res.channelController.addChannel({
+        name: "Bad Locks",
+        fetchMethod: FetchMethod.RSS,
+        fetchParams: { url: "u" },
+        retainedLocks: ["bad,name"],
+      }),
+    ).rejects.toThrow("commas are not allowed");
   });
 });
 
@@ -327,7 +334,7 @@ describe("viewChannel", () => {
     const ch = await res.channelController.addChannel({
       name: "View",
       fetchMethod: FetchMethod.RSS,
-      url: "u",
+      fetchParams: { url: "u" },
     });
     const viewed = res.channelController.viewChannel(ch.id);
     expect(viewed.name).toBe("View");
@@ -350,11 +357,15 @@ describe("listChannels", () => {
 
   it("returns all added channels", async () => {
     const res = makeReservoir();
-    await res.channelController.addChannel({ name: "A", fetchMethod: FetchMethod.RSS, url: "u1" });
+    await res.channelController.addChannel({
+      name: "A",
+      fetchMethod: FetchMethod.RSS,
+      fetchParams: { url: "u1" },
+    });
     await res.channelController.addChannel({
       name: "B",
       fetchMethod: FetchMethod.WebPage,
-      url: "u2",
+      fetchParams: { url: "u2" },
     });
     expect(res.channelController.listChannels()).toHaveLength(2);
   });
@@ -526,7 +537,8 @@ describe("editChannel", () => {
       fetchParams: { url: "https://new.com" },
     });
     expect(updated.name).toBe("New");
-    expect(updated.fetchParams.url).toBe("https://new.com");
+    expect(updated.fetchParams).toBeDefined();
+    expect(updated.fetchParams?.url).toBe("https://new.com");
     // Original fields preserved
     expect(updated.id).toBe(ch.id);
   });
@@ -536,7 +548,7 @@ describe("editChannel", () => {
     const ch = await res.channelController.addChannel({
       name: "Old",
       fetchMethod: FetchMethod.RSS,
-      url: "u",
+      fetchParams: { url: "u" },
     });
     await res.channelController.editChannel(ch.id, { name: "Persisted" });
     const reloaded = Reservoir.load(tmpDir).channelController.viewChannel(ch.id);
@@ -548,7 +560,7 @@ describe("editChannel", () => {
     const ch = await res.channelController.addChannel({
       name: "Old",
       fetchMethod: FetchMethod.RSS,
-      url: "u",
+      fetchParams: { url: "u" },
     });
     await expect(
       res.channelController.editChannel(ch.id, { retainedLocks: ["bad,name"] }),
@@ -560,7 +572,7 @@ describe("editChannel", () => {
     const ch = await res.channelController.addChannel({
       name: "Old",
       fetchMethod: FetchMethod.RSS,
-      url: "u",
+      fetchParams: { url: "u" },
     });
 
     const updated = await res.channelController.editChannel(ch.id, {
@@ -581,7 +593,7 @@ describe("deleteChannel", () => {
     const ch = await res.channelController.addChannel({
       name: "Del",
       fetchMethod: FetchMethod.RSS,
-      url: "u",
+      fetchParams: { url: "u" },
     });
     const channelDir = channelDirForId(ch.id);
     expect(fs.existsSync(channelDir)).toBe(true);
@@ -605,7 +617,7 @@ describe("listRetained", () => {
     const ch = await res.channelController.addChannel({
       name: "U",
       fetchMethod: FetchMethod.RSS,
-      url: "u",
+      fetchParams: { url: "u" },
     });
     addTestItem(res, ch.id, { id: "item1", locks: [GLOBAL_LOCK_NAME] });
     addTestItem(res, ch.id, { id: "item2", locks: [] });
@@ -619,12 +631,12 @@ describe("listRetained", () => {
     const ch1 = await res.channelController.addChannel({
       name: "C1",
       fetchMethod: FetchMethod.RSS,
-      url: "u",
+      fetchParams: { url: "u" },
     });
     const ch2 = await res.channelController.addChannel({
       name: "C2",
       fetchMethod: FetchMethod.RSS,
-      url: "u",
+      fetchParams: { url: "u" },
     });
     addTestItem(res, ch1.id, { id: "a1", locks: ["a"] });
     addTestItem(res, ch2.id, { id: "b1", locks: ["b"] });
@@ -638,7 +650,7 @@ describe("listRetained", () => {
     const ch = await res.channelController.addChannel({
       name: "C",
       fetchMethod: FetchMethod.RSS,
-      url: "u",
+      fetchParams: { url: "u" },
     });
     addTestItem(res, ch.id, { id: "c1", locks: [GLOBAL_LOCK_NAME], content: "# Hello" });
     const retained = res.contentController.listRetained();
@@ -652,7 +664,7 @@ describe("listContent", () => {
     const ch = await res.channelController.addChannel({
       name: "Frontmatter title",
       fetchMethod: FetchMethod.RSS,
-      url: "u",
+      fetchParams: { url: "u" },
     });
     addTestItem(res, ch.id, {
       id: "t1",
@@ -671,7 +683,7 @@ describe("listContent", () => {
     const ch = await res.channelController.addChannel({
       name: "Heading title",
       fetchMethod: FetchMethod.RSS,
-      url: "u",
+      fetchParams: { url: "u" },
     });
     addTestItem(res, ch.id, {
       id: "t2",
@@ -690,7 +702,7 @@ describe("listContent", () => {
     const ch = await res.channelController.addChannel({
       name: "Optional title",
       fetchMethod: FetchMethod.RSS,
-      url: "u",
+      fetchParams: { url: "u" },
     });
     addTestItem(res, ch.id, {
       id: "t3",
@@ -709,7 +721,7 @@ describe("listContent", () => {
     const ch = await res.channelController.addChannel({
       name: "Mixed",
       fetchMethod: FetchMethod.RSS,
-      url: "u",
+      fetchParams: { url: "u" },
     });
     addTestItem(res, ch.id, { id: "u1", locks: [] });
     addTestItem(res, ch.id, { id: "r1", locks: ["pin"] });
@@ -724,7 +736,7 @@ describe("listContent", () => {
     const ch = await res.channelController.addChannel({
       name: "Locks",
       fetchMethod: FetchMethod.RSS,
-      url: "u",
+      fetchParams: { url: "u" },
     });
     addTestItem(res, ch.id, { id: "l1", locks: ["alpha"] });
     addTestItem(res, ch.id, { id: "l2", locks: ["beta"] });
@@ -739,7 +751,7 @@ describe("listContent", () => {
     const ch = await res.channelController.addChannel({
       name: "Multi-locks",
       fetchMethod: FetchMethod.RSS,
-      url: "u",
+      fetchParams: { url: "u" },
     });
     addTestItem(res, ch.id, { id: "m1", locks: ["alpha"] });
     addTestItem(res, ch.id, { id: "m2", locks: ["beta"] });
@@ -757,7 +769,7 @@ describe("listContent", () => {
     const ch = await res.channelController.addChannel({
       name: "Paging",
       fetchMethod: FetchMethod.RSS,
-      url: "u",
+      fetchParams: { url: "u" },
     });
     addTestItem(res, ch.id, { id: "p1", locks: ["pin"] });
     addTestItem(res, ch.id, { id: "p2", locks: ["pin"] });
@@ -777,7 +789,7 @@ describe("retainContent / releaseContent", () => {
     const ch = await res.channelController.addChannel({
       name: "M",
       fetchMethod: FetchMethod.RSS,
-      url: "u",
+      fetchParams: { url: "u" },
     });
     addTestItem(res, ch.id, { id: "r1", locks: [] });
     await res.lockController.retainContent("r1", "pin");
@@ -790,7 +802,7 @@ describe("retainContent / releaseContent", () => {
     const ch = await res.channelController.addChannel({
       name: "M",
       fetchMethod: FetchMethod.RSS,
-      url: "u",
+      fetchParams: { url: "u" },
     });
     addTestItem(res, ch.id, { id: "r2", locks: ["pin"] });
     await res.lockController.releaseContent("r2", "pin");
@@ -803,7 +815,7 @@ describe("retainContent / releaseContent", () => {
     const ch = await res.channelController.addChannel({
       name: "M",
       fetchMethod: FetchMethod.RSS,
-      url: "u",
+      fetchParams: { url: "u" },
     });
     addTestItem(res, ch.id, { id: "r3", locks: [] });
     await res.lockController.retainContent("r3");
@@ -824,7 +836,7 @@ describe("retainContent / releaseContent", () => {
     const ch = await res.channelController.addChannel({
       name: "M",
       fetchMethod: FetchMethod.RSS,
-      url: "u",
+      fetchParams: { url: "u" },
     });
     addTestItem(res, ch.id, { id: "r4", locks: [] });
     await expect(res.lockController.retainContent("r4", "bad,name")).rejects.toThrow(
@@ -841,7 +853,7 @@ describe("retainChannel / releaseChannel", () => {
     const ch = await res.channelController.addChannel({
       name: "M",
       fetchMethod: FetchMethod.RSS,
-      url: "u",
+      fetchParams: { url: "u" },
     });
     const updated = await res.lockController.retainChannel(ch.id, "pin");
     expect(updated.retainedLocks).toContain("pin");
@@ -852,7 +864,7 @@ describe("retainChannel / releaseChannel", () => {
     const ch = await res.channelController.addChannel({
       name: "M",
       fetchMethod: FetchMethod.RSS,
-      url: "u",
+      fetchParams: { url: "u" },
       retainedLocks: ["pin", "keep"],
     });
     const updated = await res.lockController.releaseChannel(ch.id, "pin");
@@ -864,7 +876,7 @@ describe("retainChannel / releaseChannel", () => {
     const ch = await res.channelController.addChannel({
       name: "M",
       fetchMethod: FetchMethod.RSS,
-      url: "u",
+      fetchParams: { url: "u" },
     });
     const updated = await res.lockController.retainChannel(ch.id);
     expect(updated.retainedLocks).toContain(GLOBAL_LOCK_NAME);
@@ -875,7 +887,7 @@ describe("retainChannel / releaseChannel", () => {
     const ch = await res.channelController.addChannel({
       name: "M",
       fetchMethod: FetchMethod.RSS,
-      url: "u",
+      fetchParams: { url: "u" },
     });
     await expect(res.lockController.retainChannel(ch.id, "bad,name")).rejects.toThrow(
       "commas are not allowed",
@@ -891,7 +903,7 @@ describe("clean", () => {
     const ch = await res.channelController.addChannel({
       name: "C",
       fetchMethod: FetchMethod.RSS,
-      url: "u",
+      fetchParams: { url: "u" },
     });
     addTestItem(res, ch.id, { id: "del1", locks: [], content: "big content".repeat(100) });
     res.evictionController.clean();
@@ -905,7 +917,7 @@ describe("clean", () => {
     const ch = await res.channelController.addChannel({
       name: "C",
       fetchMethod: FetchMethod.RSS,
-      url: "u",
+      fetchParams: { url: "u" },
     });
     const t1 = new Date(2024, 0, 1).toISOString();
     const t2 = new Date(2024, 0, 2).toISOString();
@@ -921,7 +933,7 @@ describe("clean", () => {
     const ch = await res.channelController.addChannel({
       name: "C",
       fetchMethod: FetchMethod.RSS,
-      url: "u",
+      fetchParams: { url: "u" },
     });
 
     addTestItem(res, ch.id, { id: "locked1", locks: ["pin"], content: "x".repeat(3000) });
@@ -938,7 +950,7 @@ describe("clean", () => {
     const ch = await res.channelController.addChannel({
       name: "C",
       fetchMethod: FetchMethod.RSS,
-      url: "u",
+      fetchParams: { url: "u" },
     });
     addTestItem(res, ch.id, { id: "keep1", locks: ["pin"], content: "x".repeat(5000) });
     res.evictionController.clean();
@@ -952,7 +964,7 @@ describe("content storage format", () => {
     const ch = await res.channelController.addChannel({
       name: "Storage",
       fetchMethod: FetchMethod.RSS,
-      url: "https://example.com/feed",
+      fetchParams: { url: "https://example.com/feed" },
     });
 
     addTestItem(res, ch.id, {
@@ -994,7 +1006,7 @@ describe("content storage format", () => {
     const ch = await res.channelController.addChannel({
       name: "Orphans",
       fetchMethod: FetchMethod.RSS,
-      url: "https://example.com/feed",
+      fetchParams: { url: "https://example.com/feed" },
     });
 
     addTestItem(res, ch.id, {
@@ -1029,10 +1041,9 @@ describe("retainContentRange / releaseContentRange", () => {
   it("retains items in a range by ID", async () => {
     const res = makeReservoir();
     const ch = await res.channelController.addChannel({
-      id: "ch1",
       name: "Test Channel 1",
       fetchMethod: FetchMethod.RSS,
-      url: "https://example.com/feed",
+      fetchParams: { url: "https://example.com/feed" },
     });
 
     // Items with sequential numeric IDs
@@ -1058,10 +1069,9 @@ describe("retainContentRange / releaseContentRange", () => {
   it("retains items with open-ended range (fromId only)", async () => {
     const res = makeReservoir();
     const ch = await res.channelController.addChannel({
-      id: "ch2",
       name: "Test Channel 2",
       fetchMethod: FetchMethod.RSS,
-      url: "https://example.com/feed",
+      fetchParams: { url: "https://example.com/feed" },
     });
 
     addTestItem(res, ch.id, { id: "10", fetchedAt: "2024-01-01T00:00:00.000Z", locks: [] });
@@ -1081,10 +1091,9 @@ describe("retainContentRange / releaseContentRange", () => {
   it("retains items with open-ended range (toId only)", async () => {
     const res = makeReservoir();
     const ch = await res.channelController.addChannel({
-      id: "ch3",
       name: "Test Channel 3",
       fetchMethod: FetchMethod.RSS,
-      url: "https://example.com/feed",
+      fetchParams: { url: "https://example.com/feed" },
     });
 
     addTestItem(res, ch.id, { id: "20", fetchedAt: "2024-01-01T00:00:00.000Z", locks: [] });
@@ -1107,16 +1116,14 @@ describe("retainContentRange / releaseContentRange", () => {
   it("filters by channel", async () => {
     const res = makeReservoir();
     const ch1 = await res.channelController.addChannel({
-      id: "ch1",
       name: "Test Channel 1",
       fetchMethod: FetchMethod.RSS,
-      url: "https://example.com/feed1",
+      fetchParams: { url: "https://example.com/feed1" },
     });
     const ch2 = await res.channelController.addChannel({
-      id: "ch2",
       name: "Test Channel 2",
       fetchMethod: FetchMethod.RSS,
-      url: "https://example.com/feed2",
+      fetchParams: { url: "https://example.com/feed2" },
     });
 
     addTestItem(res, ch1.id, { id: "30", fetchedAt: "2024-01-01T00:00:00.000Z", locks: [] });
@@ -1141,10 +1148,9 @@ describe("retainContentRange / releaseContentRange", () => {
   it("releases items in a range", async () => {
     const res = makeReservoir();
     const ch = await res.channelController.addChannel({
-      id: "ch4",
       name: "Test Channel 4",
       fetchMethod: FetchMethod.RSS,
-      url: "https://example.com/feed",
+      fetchParams: { url: "https://example.com/feed" },
     });
 
     addTestItem(res, ch.id, {
@@ -1175,10 +1181,9 @@ describe("retainContentRange / releaseContentRange", () => {
   it("throws if fromId not found", async () => {
     const res = makeReservoir();
     const ch = await res.channelController.addChannel({
-      id: "ch5",
       name: "Test Channel 5",
       fetchMethod: FetchMethod.RSS,
-      url: "https://example.com/feed",
+      fetchParams: { url: "https://example.com/feed" },
     });
 
     addTestItem(res, ch.id, { id: "50", fetchedAt: "2024-01-01T00:00:00.000Z", locks: [] });
@@ -1191,10 +1196,9 @@ describe("retainContentRange / releaseContentRange", () => {
   it("throws if toId not found", async () => {
     const res = makeReservoir();
     const ch = await res.channelController.addChannel({
-      id: "ch6",
       name: "Test Channel 6",
       fetchMethod: FetchMethod.RSS,
-      url: "https://example.com/feed",
+      fetchParams: { url: "https://example.com/feed" },
     });
 
     addTestItem(res, ch.id, { id: "60", fetchedAt: "2024-01-01T00:00:00.000Z", locks: [] });
@@ -1207,10 +1211,9 @@ describe("retainContentRange / releaseContentRange", () => {
   it("throws if fromId comes after toId temporally", async () => {
     const res = makeReservoir();
     const ch = await res.channelController.addChannel({
-      id: "ch7",
       name: "Test Channel 7",
       fetchMethod: FetchMethod.RSS,
-      url: "https://example.com/feed",
+      fetchParams: { url: "https://example.com/feed" },
     });
 
     addTestItem(res, ch.id, { id: "70", fetchedAt: "2024-01-01T00:00:00.000Z", locks: [] });
@@ -1224,10 +1227,9 @@ describe("retainContentRange / releaseContentRange", () => {
   it("handles single-item range", async () => {
     const res = makeReservoir();
     const ch = await res.channelController.addChannel({
-      id: "ch8",
       name: "Test Channel 8",
       fetchMethod: FetchMethod.RSS,
-      url: "https://example.com/feed",
+      fetchParams: { url: "https://example.com/feed" },
     });
 
     addTestItem(res, ch.id, { id: "80", fetchedAt: "2024-01-01T00:00:00.000Z", locks: [] });

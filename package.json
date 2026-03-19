@@ -25,6 +25,7 @@
     "dev": "npx tsc --watch",
     "test": "vitest run",
     "lint": "npx tsc --noEmit",
+    "type-check:tests": "npx tsc --project tsconfig.tests.json --noEmit",
     "prepublishOnly": "npm run build"
   },
   "engines": {
