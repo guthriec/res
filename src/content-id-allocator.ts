@@ -1,10 +1,10 @@
-import * as fs from 'fs';
-import * as path from 'path';
-import { RelativePathHelper } from './relative-path-helper';
+import * as fs from "fs";
+import * as path from "path";
+import { RelativePathHelper } from "./relative-path-helper";
 
-const COUNTER_FILE = '.res-content-id.counter';
-const MAP_FILE = '.res-content-id.map.json';
-const LOCK_FILE = '.res-content-id.lock';
+const COUNTER_FILE = ".res-content-id.counter";
+const MAP_FILE = ".res-content-id.map.json";
+const LOCK_FILE = ".res-content-id.lock";
 const LOCK_RETRY_DELAY_MS = 10;
 const LOCK_TIMEOUT_MS = 10_000;
 
@@ -40,7 +40,7 @@ export class ContentIdAllocator {
     return this.withLock(() => {
       const current = this.readCurrentValue();
       const next = current + 1;
-      fs.writeFileSync(this.counterPath, `${next}\n`, 'utf-8');
+      fs.writeFileSync(this.counterPath, `${next}\n`, "utf-8");
       return String(next);
     });
   }
@@ -58,7 +58,7 @@ export class ContentIdAllocator {
       const next = current + 1;
       const nextId = String(next);
       mapping[nextId] = normalizedPath;
-      fs.writeFileSync(this.counterPath, `${next}\n`, 'utf-8');
+      fs.writeFileSync(this.counterPath, `${next}\n`, "utf-8");
       this.writeMapValue(mapping);
       return nextId;
     });
@@ -83,13 +83,22 @@ export class ContentIdAllocator {
     });
   }
 
-  getFileForId(id: string): string | undefined {
-    return this.readMapValue()[id];
+  getFileForId(id: string, cachedMapping?: Record<string, string>): string | undefined {
+    const mapping = cachedMapping ?? this.readMapValue();
+    return mapping[id];
   }
 
-  findIdByFile(relativeFilePath: string): string | undefined {
+  findIdByFile(
+    relativeFilePath: string,
+    cachedMapping?: Record<string, string>,
+  ): string | undefined {
     const normalizedPath = this.normalizeRelativePath(relativeFilePath);
-    return this.findIdByFileInMap(this.readMapValue(), normalizedPath);
+    const mapping = cachedMapping ?? this.readMapValue();
+    return this.findIdByFileInMap(mapping, normalizedPath);
+  }
+
+  loadMappings(): Record<string, string> {
+    return this.readMapValue();
   }
 
   listMappings(): Record<string, string> {
@@ -98,7 +107,7 @@ export class ContentIdAllocator {
 
   private readCurrentValue(): number {
     if (!fs.existsSync(this.counterPath)) return 0;
-    const raw = fs.readFileSync(this.counterPath, 'utf-8').trim();
+    const raw = fs.readFileSync(this.counterPath, "utf-8").trim();
     if (raw.length === 0) return 0;
     const parsed = Number.parseInt(raw, 10);
     if (!Number.isFinite(parsed) || parsed < 0) return 0;
@@ -108,14 +117,14 @@ export class ContentIdAllocator {
   private readMapValue(): Record<string, string> {
     if (!fs.existsSync(this.mapPath)) return {};
     try {
-      const raw = fs.readFileSync(this.mapPath, 'utf-8');
+      const raw = fs.readFileSync(this.mapPath, "utf-8");
       const parsed = JSON.parse(raw) as unknown;
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
         return {};
       }
       const normalized: Record<string, string> = {};
       for (const [id, value] of Object.entries(parsed)) {
-        if (typeof value !== 'string') continue;
+        if (typeof value !== "string") continue;
         normalized[id] = this.normalizeRelativePath(value);
       }
       return normalized;
@@ -125,10 +134,13 @@ export class ContentIdAllocator {
   }
 
   private writeMapValue(mapping: Record<string, string>): void {
-    fs.writeFileSync(this.mapPath, `${JSON.stringify(mapping, null, 2)}\n`, 'utf-8');
+    fs.writeFileSync(this.mapPath, `${JSON.stringify(mapping, null, 2)}\n`, "utf-8");
   }
 
-  private findIdByFileInMap(mapping: Record<string, string>, normalizedPath: string): string | undefined {
+  private findIdByFileInMap(
+    mapping: Record<string, string>,
+    normalizedPath: string,
+  ): string | undefined {
     for (const [id, mappedPath] of Object.entries(mapping)) {
       if (mappedPath === normalizedPath) {
         return id;
@@ -146,7 +158,7 @@ export class ContentIdAllocator {
     if (!Number.isFinite(parsedId) || parsedId <= 0) return;
     const current = this.readCurrentValue();
     if (parsedId > current) {
-      fs.writeFileSync(this.counterPath, `${parsedId}\n`, 'utf-8');
+      fs.writeFileSync(this.counterPath, `${parsedId}\n`, "utf-8");
     }
   }
 
@@ -163,7 +175,7 @@ export class ContentIdAllocator {
     const deadline = Date.now() + LOCK_TIMEOUT_MS;
     while (true) {
       try {
-        const fd = fs.openSync(this.lockPath, 'wx');
+        const fd = fs.openSync(this.lockPath, "wx");
         return () => {
           try {
             fs.closeSync(fd);
@@ -175,7 +187,7 @@ export class ContentIdAllocator {
         };
       } catch (error) {
         const code = (error as NodeJS.ErrnoException).code;
-        if (code !== 'EEXIST') throw error;
+        if (code !== "EEXIST") throw error;
         if (Date.now() >= deadline) {
           throw new Error(`Timed out acquiring content ID lock at ${this.lockPath}`);
         }
