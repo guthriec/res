@@ -1,5 +1,6 @@
 import type { ChannelConfig, Channel, ContentItem, ReservoirConfig } from "../types";
 import { GLOBAL_LOCK_NAME } from "../types";
+import { ContentParser } from "../content-parser";
 import type {
   Reservoir,
   ChannelController,
@@ -113,6 +114,45 @@ class ContentControllerFake implements ContentController {
 
   listRetained(channelIds?: string[]): ContentItem[] {
     return this.listContent({ channelIds, retained: true });
+  }
+
+  readContentFrontmatterMap(contentId: string): Record<string, string> {
+    const item = this.state.content.find((candidate) => candidate.id === contentId);
+    if (!item) {
+      throw new Error(`Content not found: ${contentId}`);
+    }
+
+    return ContentParser.parseInlineFrontmatter(item.content);
+  }
+
+  readContentFrontmatter(contentId: string, key: string): string | undefined {
+    const normalizedKey = key.trim();
+    if (!normalizedKey) {
+      throw new Error("Frontmatter key must not be empty");
+    }
+
+    const fields = this.readContentFrontmatterMap(contentId);
+    return fields[normalizedKey];
+  }
+
+  async writeContentFrontmatter(
+    contentId: string,
+    updates: Record<string, string | null>,
+  ): Promise<ContentItem> {
+    const item = this.state.content.find((candidate) => candidate.id === contentId);
+    if (!item) {
+      throw new Error(`Content not found: ${contentId}`);
+    }
+
+    const content = ContentParser.writeInlineFrontmatter(item.content, updates);
+
+    const updated: ContentItem = {
+      ...item,
+      content,
+    };
+    const index = this.state.content.findIndex((candidate) => candidate.id === contentId);
+    this.state.content[index] = updated;
+    return updated;
   }
 }
 

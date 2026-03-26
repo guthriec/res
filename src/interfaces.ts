@@ -17,6 +17,12 @@ export interface ContentController {
     pageOffset?: number;
   }): ContentItem[];
   listRetained(channelIds?: string[]): ContentItem[];
+  readContentFrontmatterMap(contentId: string): Record<string, string>;
+  readContentFrontmatter(contentId: string, key: string): string | undefined;
+  writeContentFrontmatter(
+    contentId: string,
+    updates: Record<string, string | null>,
+  ): Promise<ContentItem>;
 }
 
 export interface LockController {

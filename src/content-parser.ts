@@ -1,14 +1,14 @@
 export class ContentParser {
   static parseInlineFrontmatter(rawContent: string): Record<string, string> {
-    if (!rawContent.startsWith('---\n')) return {};
-    const endIdx = rawContent.indexOf('\n---\n', 4);
+    if (!rawContent.startsWith("---\n")) return {};
+    const endIdx = rawContent.indexOf("\n---\n", 4);
     if (endIdx === -1) return {};
 
-    const header = rawContent.slice(4, endIdx).split('\n');
+    const header = rawContent.slice(4, endIdx).split("\n");
     const fields: Record<string, string> = {};
 
     for (const line of header) {
-      const sep = line.indexOf(':');
+      const sep = line.indexOf(":");
       if (sep === -1) continue;
       const key = line.slice(0, sep).trim();
       if (!key) continue;
@@ -19,6 +19,32 @@ export class ContentParser {
     return fields;
   }
 
+  static writeInlineFrontmatter(
+    rawContent: string,
+    updates: Record<string, string | null>,
+  ): string {
+    const current = ContentParser.parseInlineFrontmatter(rawContent);
+    const merged: Record<string, string> = { ...current };
+
+    for (const [key, value] of Object.entries(updates)) {
+      const normalizedKey = key.trim();
+      if (!normalizedKey) continue;
+      if (value === null) {
+        delete merged[normalizedKey];
+        continue;
+      }
+      merged[normalizedKey] = value;
+    }
+
+    const body = ContentParser.stripInlineFrontmatter(rawContent);
+    const frontmatter = ContentParser.serializeFrontmatter(merged);
+    if (!frontmatter) {
+      return body;
+    }
+
+    return `${frontmatter}\n${body}`;
+  }
+
   static inferTitleFromContent(rawContent: string): string | undefined {
     const fields = ContentParser.parseInlineFrontmatter(rawContent);
     const frontmatterTitle = fields.title?.trim();
@@ -27,7 +53,7 @@ export class ContentParser {
     }
 
     const body = ContentParser.stripInlineFrontmatter(rawContent);
-    const lines = body.split('\n');
+    const lines = body.split("\n");
     for (const line of lines) {
       const match = line.match(/^\s*#\s+(.+?)\s*#*\s*$/);
       if (!match) continue;
@@ -41,10 +67,10 @@ export class ContentParser {
   }
 
   private static stripInlineFrontmatter(rawContent: string): string {
-    if (!rawContent.startsWith('---\n')) {
+    if (!rawContent.startsWith("---\n")) {
       return rawContent;
     }
-    const endIdx = rawContent.indexOf('\n---\n', 4);
+    const endIdx = rawContent.indexOf("\n---\n", 4);
     if (endIdx === -1) {
       return rawContent;
     }
@@ -54,9 +80,19 @@ export class ContentParser {
   private static parseMaybeJsonString(value: string): string {
     try {
       const parsed = JSON.parse(value);
-      return typeof parsed === 'string' ? parsed : value;
+      return typeof parsed === "string" ? parsed : value;
     } catch {
       return value;
     }
+  }
+
+  private static serializeFrontmatter(fields: Record<string, string>): string {
+    const keys = Object.keys(fields);
+    if (keys.length === 0) {
+      return "";
+    }
+
+    const lines = keys.map((key) => `${key}: ${JSON.stringify(fields[key])}`);
+    return ["---", ...lines, "---"].join("\n");
   }
 }
