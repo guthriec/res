@@ -14,10 +14,32 @@ This repository includes GitHub Actions workflows for validation and publishing.
 
 ## Release checklist
 
-1. Bump the version in `package.json` (for example with `npm version patch`). This creates a commit and a `v*` tag.
-2. Push commit and tag to GitHub:
+1. Create a release branch from `main`:
 
   ```bash
+  git checkout -b release/vX.Y.Z
+  ```
+
+2. Bump the version in `package.json` (for example with `npm version patch`). This creates a commit and a `v*` tag:
+
+  ```bash
+  npm version patch
+  ```
+
+3. Push the branch and tag to GitHub:
+
+  ```bash
+  git push origin --follow-tags
+  ```
+
+4. Create a pull request on GitHub and wait for CI to pass.
+
+5. Once CI passes and the PR is reviewed, merge it to `main`:
+
+  ```bash
+  git checkout main
+  git pull origin main
+  git merge release/vX.Y.Z
   git push origin main --follow-tags
   ```
 
@@ -29,7 +51,7 @@ This repository includes GitHub Actions workflows for validation and publishing.
   git push origin v0.1.1
   ```
 
-3. Ensure npm Trusted Publishing is configured for `guthriec/res` and `.github/workflows/publish.yml`.
+6. Ensure npm Trusted Publishing is configured for `guthriec/res` and `.github/workflows/publish.yml`.
 
 ## Troubleshooting publish failures
 
