@@ -25,11 +25,13 @@ export class FilesystemSynchronizer {
   async syncContentTracking(): Promise<void> {
     const logger = Logger.fromEnvironment();
     const channels = this.channelController.listChannels();
-    const allMappings = this.idAllocator.listMappings();
-    const staleIds = Object.entries(allMappings)
+    let cachedMappings = this.idAllocator.loadMappings();
+    const staleIds = Object.entries(cachedMappings)
       .filter(([, relPath]) => !fs.existsSync(path.join(this.reservoirDir, relPath)))
       .map(([id]) => id);
     await Promise.all(staleIds.map((id) => this.idAllocator.removeMappingById(id)));
+    // Reload mappings after removals to pick up any concurrent mutations
+    cachedMappings = this.idAllocator.loadMappings();
 
     for (const channel of channels) {
       const metadata = this.channelController.loadMetadata(channel.id);
@@ -37,7 +39,7 @@ export class FilesystemSynchronizer {
       let orphanedRemoved = 0;
       let recordsUpdated = 0;
       metadata.items = metadata.items.filter((item) => {
-        const mappedRelativePath = this.idAllocator.getFileForId(item.id);
+        const mappedRelativePath = this.idAllocator.getFileForId(item.id, cachedMappings);
         const candidatePath = mappedRelativePath ?? item.filePath;
         if (!candidatePath) {
           metadataChanged = true;
@@ -56,7 +58,7 @@ export class FilesystemSynchronizer {
       const seenIds = new Set<string>();
 
       for (const item of metadata.items) {
-        const mappedRelativePath = this.idAllocator.getFileForId(item.id);
+        const mappedRelativePath = this.idAllocator.getFileForId(item.id, cachedMappings);
         const relativePath = RelativePathHelper.normalizeRelativePath(
           mappedRelativePath ?? item.filePath ?? "",
         );
