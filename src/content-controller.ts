@@ -72,4 +72,64 @@ export class ContentControllerImpl implements ContentController {
   listRetained(channelIds?: string[]): ContentItem[] {
     return this.listContent({ channelIds, retained: true });
   }
+
+  readContentFrontmatterMap(contentId: string): Record<string, string> {
+    const channels = this.channelController.listChannels();
+    for (const channel of channels) {
+      const exists = this.channelController
+        .loadMetadata(channel.id)
+        .items.some((item) => item.id === contentId);
+      if (!exists) continue;
+
+      const parsed = this.channelController.readContentFilesById(channel.id).get(contentId);
+      if (!parsed) {
+        throw new Error(`Content file not found for id ${contentId}`);
+      }
+
+      return ContentParser.parseInlineFrontmatter(parsed.content);
+    }
+
+    throw new Error(`Content not found: ${contentId}`);
+  }
+
+  readContentFrontmatter(contentId: string, key: string): string | undefined {
+    const normalizedKey = key.trim();
+    if (!normalizedKey) {
+      throw new Error("Frontmatter key must not be empty");
+    }
+    const fields = this.readContentFrontmatterMap(contentId);
+    return fields[normalizedKey];
+  }
+
+  async writeContentFrontmatter(
+    contentId: string,
+    updates: Record<string, string | null>,
+  ): Promise<ContentItem> {
+    const channels = this.channelController.listChannels();
+
+    for (const channel of channels) {
+      const state = this.channelController.loadMetadata(channel.id).items.find((item) => item.id === contentId);
+      if (!state) continue;
+
+      const parsed = this.channelController.readContentFilesById(channel.id).get(contentId);
+      if (!parsed) {
+        throw new Error(`Content file not found for id ${contentId}`);
+      }
+
+      const updatedContent = ContentParser.writeInlineFrontmatter(parsed.content, updates);
+      this.channelController.writeContentById(channel.id, contentId, updatedContent);
+
+      return {
+        id: contentId,
+        channelId: channel.id,
+        title: ContentParser.inferTitleFromContent(updatedContent),
+        fetchedAt: state.fetchedAt,
+        locks: [...state.locks],
+        content: updatedContent,
+        filePath: this.relativePathHelper.toRelativePath(parsed.filePath),
+      };
+    }
+
+    throw new Error(`Content not found: ${contentId}`);
+  }
 }

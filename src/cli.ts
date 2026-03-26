@@ -76,6 +76,70 @@ function parseRetainedByList(value: string | undefined): string[] | undefined {
   return values;
 }
 
+function parseFrontmatterUpdates(value: string): Record<string, string | null> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error("Invalid --updates value. Expected valid JSON object.");
+  }
+
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("Invalid --updates value. Expected JSON object.");
+  }
+
+  const updates: Record<string, string | null> = {};
+  for (const [key, rawValue] of Object.entries(parsed as Record<string, unknown>)) {
+    const normalizedKey = key.trim();
+    if (!normalizedKey) {
+      throw new Error("Invalid --updates key. Keys must not be empty.");
+    }
+
+    if (rawValue === null) {
+      updates[normalizedKey] = null;
+      continue;
+    }
+
+    if (typeof rawValue === "string" || typeof rawValue === "number" || typeof rawValue === "boolean") {
+      updates[normalizedKey] = String(rawValue);
+      continue;
+    }
+
+    throw new Error(
+      `Invalid --updates value for key '${normalizedKey}'. Expected string, number, boolean, or null.`,
+    );
+  }
+
+  return updates;
+}
+
+function parseFrontmatterKeys(options: {
+  key?: string[];
+  keys?: string;
+}): string[] {
+  const keys = new Set<string>();
+
+  for (const key of options.key ?? []) {
+    const normalized = key.trim();
+    if (!normalized) {
+      throw new Error("Invalid --key value. Keys must not be empty.");
+    }
+    keys.add(normalized);
+  }
+
+  if (options.keys !== undefined) {
+    for (const key of options.keys.split(",")) {
+      const normalized = key.trim();
+      if (!normalized) {
+        throw new Error("Invalid --keys value. Keys must not be empty.");
+      }
+      keys.add(normalized);
+    }
+  }
+
+  return Array.from(keys);
+}
+
 // ─── init ────────────────────────────────────────────────────────────────────
 
 program
@@ -363,6 +427,60 @@ contentCmd
       console.log(JSON.stringify(output, null, 2));
     },
   );
+
+contentCmd
+  .command("get-frontmatter <id>")
+  .description("Get one or more frontmatter values by key for a content item")
+  .option("--key <name>", "frontmatter key name (repeatable)", (value, acc: string[]) => {
+    return [...acc, value];
+  }, [])
+  .option("--keys <names>", "comma-separated frontmatter key names")
+  .action((id: string, opts: { key?: string[]; keys?: string }) => {
+    const keys = parseFrontmatterKeys(opts);
+    const contentController = loadReservoir(getGlobalDir()).contentController;
+
+    if (keys.length === 0) {
+      const values = contentController.readContentFrontmatterMap(id);
+      console.log(JSON.stringify({ id, values }, null, 2));
+      return;
+    }
+
+    if (keys.length === 1) {
+      const key = keys[0];
+      const value = contentController.readContentFrontmatter(id, key);
+      console.log(JSON.stringify({ id, key, value }, null, 2));
+      return;
+    }
+
+    const values: Record<string, string | null> = {};
+    for (const key of keys) {
+      const value = contentController.readContentFrontmatter(id, key);
+      values[key] = value ?? null;
+    }
+    console.log(JSON.stringify({ id, values }, null, 2));
+  });
+
+contentCmd
+  .command("set-frontmatter <id>")
+  .description("Set or remove frontmatter fields on a content item")
+  .requiredOption(
+    "--updates <json>",
+    "JSON object of frontmatter updates; use null values to remove keys",
+  )
+  .action(async (id: string, opts: { updates: string }) => {
+    const updates = parseFrontmatterUpdates(opts.updates);
+    const updated = await loadReservoir(getGlobalDir()).contentController.writeContentFrontmatter(
+      id,
+      updates,
+    );
+    const output = {
+      id: updated.id,
+      channelId: updated.channelId,
+      title: updated.title,
+      filePath: updated.filePath,
+    };
+    console.log(JSON.stringify(output, null, 2));
+  });
 
 // ─── clean ───────────────────────────────────────────────────────────────────
 

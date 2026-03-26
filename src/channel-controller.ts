@@ -163,6 +163,29 @@ export class ChannelControllerImpl implements ChannelController {
     return parsedById;
   }
 
+  writeContentById(channelId: string, contentId: string, content: string): string {
+    const metadataById = new Map(this.loadMetadata(channelId).items.map((item) => [item.id, item]));
+    const state = metadataById.get(contentId);
+    if (!state) {
+      throw new Error(`Content not found: ${contentId}`);
+    }
+
+    const mappedPath = this.idAllocator.getFileForId(state.id);
+    const candidate = mappedPath ?? state.filePath;
+    if (!candidate) {
+      throw new Error(`Unable to resolve file path for content: ${contentId}`);
+    }
+
+    const normalized = RelativePathHelper.normalizeRelativePath(candidate);
+    const absolutePath = path.join(this.directory, normalized);
+    if (!fs.existsSync(absolutePath) || !absolutePath.toLowerCase().endsWith(".md")) {
+      throw new Error(`Content file not found for id ${contentId}`);
+    }
+
+    fs.writeFileSync(absolutePath, content);
+    return absolutePath;
+  }
+
   getContentByUrl(channelId: string, url: string): { content: string } | undefined {
     const contentDir = this.resolveChannelContentRoot(channelId);
     if (!fs.existsSync(contentDir)) return undefined;

@@ -19,6 +19,32 @@ export class ContentParser {
     return fields;
   }
 
+  static writeInlineFrontmatter(
+    rawContent: string,
+    updates: Record<string, string | null>,
+  ): string {
+    const current = ContentParser.parseInlineFrontmatter(rawContent);
+    const merged: Record<string, string> = { ...current };
+
+    for (const [key, value] of Object.entries(updates)) {
+      const normalizedKey = key.trim();
+      if (!normalizedKey) continue;
+      if (value === null) {
+        delete merged[normalizedKey];
+        continue;
+      }
+      merged[normalizedKey] = value;
+    }
+
+    const body = ContentParser.stripInlineFrontmatter(rawContent);
+    const frontmatter = ContentParser.serializeFrontmatter(merged);
+    if (!frontmatter) {
+      return body;
+    }
+
+    return `${frontmatter}\n${body}`;
+  }
+
   static inferTitleFromContent(rawContent: string): string | undefined {
     const fields = ContentParser.parseInlineFrontmatter(rawContent);
     const frontmatterTitle = fields.title?.trim();
@@ -58,5 +84,15 @@ export class ContentParser {
     } catch {
       return value;
     }
+  }
+
+  private static serializeFrontmatter(fields: Record<string, string>): string {
+    const keys = Object.keys(fields);
+    if (keys.length === 0) {
+      return "";
+    }
+
+    const lines = keys.map((key) => `${key}: ${JSON.stringify(fields[key])}`);
+    return ["---", ...lines, "---"].join("\n");
   }
 }

@@ -253,6 +253,58 @@ Options:
 
 Output includes each item metadata and relative `filePath`.
 
+## `content get-frontmatter`
+
+Get a frontmatter value by key for a specific content item.
+
+```bash
+res content get-frontmatter <id> --key <name>
+```
+
+If no key options are provided, all frontmatter fields are returned.
+
+```bash
+res content get-frontmatter <id>
+```
+
+Or fetch multiple keys in one call:
+
+```bash
+res content get-frontmatter <id> --keys <name1,name2,...>
+res content get-frontmatter <id> --key <name1> --key <name2>
+```
+
+Options:
+
+- `--key <name>`: frontmatter key to read (repeatable)
+- `--keys <names>`: comma-separated frontmatter keys to read
+
+Output:
+
+- Single-key output: JSON object with `id`, `key`, and `value` (`value` is `null` in JSON when key is not present)
+- Multi-key output: JSON object with `id` and `values` map (`null` for missing keys)
+- No-key output: JSON object with `id` and `values` map for all frontmatter fields
+
+## `content set-frontmatter`
+
+Set or remove frontmatter keys on a specific content item.
+
+```bash
+res content set-frontmatter <id> --updates <json>
+```
+
+Options:
+
+- `--updates <json>`: JSON object of key/value updates
+  - string, number, and boolean values are persisted as frontmatter string values
+  - `null` removes a key from frontmatter
+
+Example:
+
+```bash
+res content set-frontmatter 42 --updates '{"status":"read","rating":5,"oldKey":null}'
+```
+
 ## `clean`
 
 Delete unlocked content beyond configured max size.

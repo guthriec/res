@@ -779,6 +779,147 @@ describe("listContent", () => {
     expect(page).toHaveLength(1);
     expect(page[0].id).toBe("p2");
   });
+
+  it("writes frontmatter updates to an existing content item", async () => {
+    const res = makeReservoir();
+    const ch = await res.channelController.addChannel({
+      name: "Frontmatter updates",
+      fetchMethod: FetchMethod.RSS,
+      fetchParams: { url: "u" },
+    });
+    addTestItem(res, ch.id, {
+      id: "fm1",
+      locks: ["pin"],
+      content: ["---", 'status: "unread"', "---", "", "# Original Title"].join("\n"),
+    });
+
+    const updated = await res.contentController.writeContentFrontmatter("fm1", {
+      status: "read",
+      reviewer: "alex",
+    });
+
+    expect(updated.id).toBe("fm1");
+    const listed = res.contentController.listContent({ channelIds: [ch.id], retained: true });
+    expect(listed).toHaveLength(1);
+    expect(listed[0].content).toContain('status: "read"');
+    expect(listed[0].content).toContain('reviewer: "alex"');
+  });
+
+  it("reads a frontmatter value by key", async () => {
+    const res = makeReservoir();
+    const ch = await res.channelController.addChannel({
+      name: "Frontmatter read",
+      fetchMethod: FetchMethod.RSS,
+      fetchParams: { url: "u" },
+    });
+    addTestItem(res, ch.id, {
+      id: "fm-read-1",
+      locks: ["pin"],
+      content: ["---", 'status: "read"', 'reviewer: "alex"', "---", "", "# Body"].join(
+        "\n",
+      ),
+    });
+
+    const value = res.contentController.readContentFrontmatter("fm-read-1", "reviewer");
+    expect(value).toBe("alex");
+  });
+
+  it("reads all frontmatter fields as a key/value map", async () => {
+    const res = makeReservoir();
+    const ch = await res.channelController.addChannel({
+      name: "Frontmatter map",
+      fetchMethod: FetchMethod.RSS,
+      fetchParams: { url: "u" },
+    });
+    addTestItem(res, ch.id, {
+      id: "fm-read-map-1",
+      locks: ["pin"],
+      content: ["---", 'status: "read"', 'reviewer: "alex"', "---", "", "# Body"].join(
+        "\n",
+      ),
+    });
+
+    const values = res.contentController.readContentFrontmatterMap("fm-read-map-1");
+    expect(values).toEqual({
+      status: "read",
+      reviewer: "alex",
+    });
+  });
+
+  it("returns an empty map when content has no inline frontmatter", async () => {
+    const res = makeReservoir();
+    const ch = await res.channelController.addChannel({
+      name: "Frontmatter empty map",
+      fetchMethod: FetchMethod.RSS,
+      fetchParams: { url: "u" },
+    });
+    addTestItem(res, ch.id, {
+      id: "fm-read-map-2",
+      locks: ["pin"],
+      content: "# Body without frontmatter",
+    });
+
+    const values = res.contentController.readContentFrontmatterMap("fm-read-map-2");
+    expect(values).toEqual({});
+  });
+
+  it("returns undefined when frontmatter key is missing", async () => {
+    const res = makeReservoir();
+    const ch = await res.channelController.addChannel({
+      name: "Frontmatter missing key",
+      fetchMethod: FetchMethod.RSS,
+      fetchParams: { url: "u" },
+    });
+    addTestItem(res, ch.id, {
+      id: "fm-read-2",
+      locks: ["pin"],
+      content: ["---", 'status: "read"', "---", "", "# Body"].join("\n"),
+    });
+
+    const value = res.contentController.readContentFrontmatter("fm-read-2", "reviewer");
+    expect(value).toBeUndefined();
+  });
+
+  it("throws when frontmatter key is empty", async () => {
+    const res = makeReservoir();
+    const ch = await res.channelController.addChannel({
+      name: "Frontmatter empty key",
+      fetchMethod: FetchMethod.RSS,
+      fetchParams: { url: "u" },
+    });
+    addTestItem(res, ch.id, {
+      id: "fm-read-3",
+      locks: ["pin"],
+      content: ["---", 'status: "read"', "---", "", "# Body"].join("\n"),
+    });
+
+    expect(() => res.contentController.readContentFrontmatter("fm-read-3", "   ")).toThrow(
+      "Frontmatter key must not be empty",
+    );
+  });
+
+  it("removes frontmatter keys when update value is null", async () => {
+    const res = makeReservoir();
+    const ch = await res.channelController.addChannel({
+      name: "Frontmatter remove",
+      fetchMethod: FetchMethod.RSS,
+      fetchParams: { url: "u" },
+    });
+    addTestItem(res, ch.id, {
+      id: "fm2",
+      locks: ["pin"],
+      content: ["---", 'status: "read"', 'tag: "news"', "---", "", "# Keep Body"].join("\n"),
+    });
+
+    await res.contentController.writeContentFrontmatter("fm2", {
+      tag: null,
+    });
+
+    const listed = res.contentController.listContent({ channelIds: [ch.id], retained: true });
+    expect(listed).toHaveLength(1);
+    expect(listed[0].content).toContain('status: "read"');
+    expect(listed[0].content).not.toContain('tag: "news"');
+  });
 });
 
 // ─── retain/release content ─────────────────────────────────────────────────-
