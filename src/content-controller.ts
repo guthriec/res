@@ -108,7 +108,9 @@ export class ContentControllerImpl implements ContentController {
     const channels = this.channelController.listChannels();
 
     for (const channel of channels) {
-      const state = this.channelController.loadMetadata(channel.id).items.find((item) => item.id === contentId);
+      const state = this.channelController
+        .loadMetadata(channel.id)
+        .items.find((item) => item.id === contentId);
       if (!state) continue;
 
       const parsed = this.channelController.readContentFilesById(channel.id).get(contentId);

@@ -3,14 +3,9 @@ import { ContentParser } from "../src/content-parser";
 describe("ContentParser.writeInlineFrontmatter", () => {
   it("updates existing frontmatter values and adds new keys", () => {
     // GIVEN
-    const source = [
-      "---",
-      'title: "Old Title"',
-      'status: "unread"',
-      "---",
-      "",
-      "# Heading",
-    ].join("\n");
+    const source = ["---", 'title: "Old Title"', 'status: "unread"', "---", "", "# Heading"].join(
+      "\n",
+    );
 
     // WHEN
     const updated = ContentParser.writeInlineFrontmatter(source, {

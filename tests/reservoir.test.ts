@@ -815,9 +815,7 @@ describe("listContent", () => {
     addTestItem(res, ch.id, {
       id: "fm-read-1",
       locks: ["pin"],
-      content: ["---", 'status: "read"', 'reviewer: "alex"', "---", "", "# Body"].join(
-        "\n",
-      ),
+      content: ["---", 'status: "read"', 'reviewer: "alex"', "---", "", "# Body"].join("\n"),
     });
 
     const value = res.contentController.readContentFrontmatter("fm-read-1", "reviewer");
@@ -834,9 +832,7 @@ describe("listContent", () => {
     addTestItem(res, ch.id, {
       id: "fm-read-map-1",
       locks: ["pin"],
-      content: ["---", 'status: "read"', 'reviewer: "alex"', "---", "", "# Body"].join(
-        "\n",
-      ),
+      content: ["---", 'status: "read"', 'reviewer: "alex"', "---", "", "# Body"].join("\n"),
     });
 
     const values = res.contentController.readContentFrontmatterMap("fm-read-map-1");

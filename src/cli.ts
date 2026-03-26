@@ -100,7 +100,11 @@ function parseFrontmatterUpdates(value: string): Record<string, string | null> {
       continue;
     }
 
-    if (typeof rawValue === "string" || typeof rawValue === "number" || typeof rawValue === "boolean") {
+    if (
+      typeof rawValue === "string" ||
+      typeof rawValue === "number" ||
+      typeof rawValue === "boolean"
+    ) {
       updates[normalizedKey] = String(rawValue);
       continue;
     }
@@ -113,10 +117,7 @@ function parseFrontmatterUpdates(value: string): Record<string, string | null> {
   return updates;
 }
 
-function parseFrontmatterKeys(options: {
-  key?: string[];
-  keys?: string;
-}): string[] {
+function parseFrontmatterKeys(options: { key?: string[]; keys?: string }): string[] {
   const keys = new Set<string>();
 
   for (const key of options.key ?? []) {
@@ -431,9 +432,14 @@ contentCmd
 contentCmd
   .command("get-frontmatter <id>")
   .description("Get one or more frontmatter values by key for a content item")
-  .option("--key <name>", "frontmatter key name (repeatable)", (value, acc: string[]) => {
-    return [...acc, value];
-  }, [])
+  .option(
+    "--key <name>",
+    "frontmatter key name (repeatable)",
+    (value, acc: string[]) => {
+      return [...acc, value];
+    },
+    [],
+  )
   .option("--keys <names>", "comma-separated frontmatter key names")
   .action((id: string, opts: { key?: string[]; keys?: string }) => {
     const keys = parseFrontmatterKeys(opts);
