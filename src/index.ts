@@ -33,3 +33,5 @@ export {
   createBackgroundFetchWorkerState,
   isProcessRunning,
 } from "./background-fetch-worker";
+export { ReservoirError, ErrorCodes } from "./errors";
+export type { ErrorCode } from "./errors";

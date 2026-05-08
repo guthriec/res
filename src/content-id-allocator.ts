@@ -1,6 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { RelativePathHelper } from "./relative-path-helper";
+import { ReservoirError, ErrorCodes } from "./errors";
 
 const COUNTER_FILE = ".res-content-id.counter";
 const MAP_FILE = ".res-content-id.map.json";
@@ -189,7 +190,10 @@ export class ContentIdAllocator {
         const code = (error as NodeJS.ErrnoException).code;
         if (code !== "EEXIST") throw error;
         if (Date.now() >= deadline) {
-          throw new Error(`Timed out acquiring content ID lock at ${this.lockPath}`);
+          throw new ReservoirError(
+            ErrorCodes.LOCK_TIMEOUT,
+            `Timed out acquiring content ID lock at ${this.lockPath}`,
+          );
         }
         await sleep(LOCK_RETRY_DELAY_MS);
       }

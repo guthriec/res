@@ -3,6 +3,7 @@ import { ChannelControllerImpl } from "./channel-controller";
 import { ContentParser } from "./content-parser";
 import { RelativePathHelper } from "./relative-path-helper";
 import type { ContentController } from "./interfaces";
+import { ReservoirError, ErrorCodes } from "./errors";
 
 export class ContentControllerImpl implements ContentController {
   private readonly relativePathHelper: RelativePathHelper;
@@ -83,19 +84,19 @@ export class ContentControllerImpl implements ContentController {
 
       const parsed = this.channelController.readContentFilesById(channel.id).get(contentId);
       if (!parsed) {
-        throw new Error(`Content file not found for id ${contentId}`);
+        throw new ReservoirError(ErrorCodes.CONTENT_FILE_NOT_FOUND, `Content file not found for id ${contentId}`);
       }
 
       return ContentParser.parseInlineFrontmatter(parsed.content);
     }
 
-    throw new Error(`Content not found: ${contentId}`);
+    throw new ReservoirError(ErrorCodes.CONTENT_NOT_FOUND, `Content not found: ${contentId}`);
   }
 
   readContentFrontmatter(contentId: string, key: string): string | undefined {
     const normalizedKey = key.trim();
     if (!normalizedKey) {
-      throw new Error("Frontmatter key must not be empty");
+      throw new ReservoirError(ErrorCodes.INVALID_INPUT, "Frontmatter key must not be empty");
     }
     const fields = this.readContentFrontmatterMap(contentId);
     return fields[normalizedKey];
@@ -115,7 +116,7 @@ export class ContentControllerImpl implements ContentController {
 
       const parsed = this.channelController.readContentFilesById(channel.id).get(contentId);
       if (!parsed) {
-        throw new Error(`Content file not found for id ${contentId}`);
+        throw new ReservoirError(ErrorCodes.CONTENT_FILE_NOT_FOUND, `Content file not found for id ${contentId}`);
       }
 
       const updatedContent = ContentParser.writeInlineFrontmatter(parsed.content, updates);
@@ -132,6 +133,6 @@ export class ContentControllerImpl implements ContentController {
       };
     }
 
-    throw new Error(`Content not found: ${contentId}`);
+    throw new ReservoirError(ErrorCodes.CONTENT_NOT_FOUND, `Content not found: ${contentId}`);
   }
 }
