@@ -4,6 +4,7 @@ import { Channel } from "./types";
 import { InputNormalizer } from "./input-normalizer";
 import { ChannelControllerImpl } from "./channel-controller";
 import type { LockController } from "./interfaces";
+import { ReservoirError, ErrorCodes } from "./errors";
 
 const CHANNEL_CONFIG_FILE = "channel.json";
 
@@ -75,7 +76,7 @@ export class LockControllerImpl implements LockController {
     retain: boolean,
   ): Promise<void> {
     const found = this.findItem(contentId);
-    if (!found) throw new Error(`Content not found: ${contentId}`);
+    if (!found) throw new ReservoirError(ErrorCodes.CONTENT_NOT_FOUND, `Content not found: ${contentId}`);
     const meta = this.channelController.loadMetadata(found.channelId);
     const item = meta.items[found.index];
     if (retain) {
@@ -102,10 +103,10 @@ export class LockControllerImpl implements LockController {
     const fromIdNum = fromId ? Number(fromId) : -Infinity;
     const toIdNum = toId ? Number(toId) : Infinity;
 
-    if (fromId && isNaN(fromIdNum)) throw new Error(`Invalid start ID: ${fromId}`);
-    if (toId && isNaN(toIdNum)) throw new Error(`Invalid end ID: ${toId}`);
+    if (fromId && isNaN(fromIdNum)) throw new ReservoirError(ErrorCodes.INVALID_INPUT, `Invalid start ID: ${fromId}`);
+    if (toId && isNaN(toIdNum)) throw new ReservoirError(ErrorCodes.INVALID_INPUT, `Invalid end ID: ${toId}`);
     if (fromIdNum > toIdNum)
-      throw new Error(`Invalid range: fromId (${fromId}) comes after toId (${toId})`);
+      throw new ReservoirError(ErrorCodes.INVALID_RANGE, `Invalid range: fromId (${fromId}) comes after toId (${toId})`);
 
     let foundFrom = !fromId;
     let foundTo = !toId;
@@ -136,8 +137,8 @@ export class LockControllerImpl implements LockController {
       }
     }
 
-    if (!foundFrom) throw new Error(`Start ID not found: ${fromId}`);
-    if (!foundTo) throw new Error(`End ID not found: ${toId}`);
+    if (!foundFrom) throw new ReservoirError(ErrorCodes.ID_NOT_FOUND, `Start ID not found: ${fromId}`);
+    if (!foundTo) throw new ReservoirError(ErrorCodes.ID_NOT_FOUND, `End ID not found: ${toId}`);
 
     for (const [chId, meta] of metaByChannel.entries()) {
       await this.channelController.saveMetadata(chId, meta);

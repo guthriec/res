@@ -3,6 +3,7 @@ import * as os from "os";
 import * as path from "path";
 import { ReservoirImpl } from "../src/reservoir";
 import { FetchMethod, GLOBAL_LOCK_NAME, DEFAULT_DUPLICATE_STRATEGY } from "../src/types";
+import { ReservoirError, ErrorCodes } from "../src/errors";
 
 type Reservoir = ReservoirImpl;
 const Reservoir = {
@@ -182,7 +183,14 @@ describe("Reservoir.load", () => {
   });
 
   it("throws for non-existent reservoir", async () => {
-    expect(() => Reservoir.load(path.join(tmpDir, "nonexistent"))).toThrow("Run 'res init' first");
+    const loadFn = () => Reservoir.load(path.join(tmpDir, "nonexistent"));
+    expect(loadFn).toThrow("Run 'res init' first");
+    expect(loadFn).toThrow(ReservoirError);
+    try {
+      loadFn();
+    } catch (e) {
+      expect((e as ReservoirError).code).toBe(ErrorCodes.RESERVOIR_NOT_FOUND);
+    }
   });
 });
 
@@ -200,7 +208,14 @@ describe("Reservoir.loadNearest", () => {
   it("throws when no initialized reservoir exists in parent chain", async () => {
     const startDir = path.join(tmpDir, "x", "y");
     fs.mkdirSync(startDir, { recursive: true });
-    expect(() => Reservoir.loadNearest(startDir)).toThrow("No reservoir found from");
+    const loadFn = () => Reservoir.loadNearest(startDir);
+    expect(loadFn).toThrow("No reservoir found from");
+    expect(loadFn).toThrow(ReservoirError);
+    try {
+      loadFn();
+    } catch (e) {
+      expect((e as ReservoirError).code).toBe(ErrorCodes.RESERVOIR_NOT_FOUND);
+    }
   });
 });
 
@@ -250,6 +265,12 @@ describe("setMaxSizeMB", () => {
     await res.setMaxSizeMB(10);
 
     expect(contentPathForId(ch.id, "keep1")).not.toBeNull();
+  });
+
+  it("throws INVALID_INPUT when maxSizeMB is not positive", async () => {
+    const res = makeReservoir();
+    await expect(res.setMaxSizeMB(0)).rejects.toMatchObject({ code: ErrorCodes.INVALID_INPUT });
+    await expect(res.setMaxSizeMB(-1)).rejects.toMatchObject({ code: ErrorCodes.INVALID_INPUT });
   });
 });
 
@@ -343,7 +364,11 @@ describe("viewChannel", () => {
 
   it("throws for unknown channel", async () => {
     const res = makeReservoir();
-    expect(() => res.channelController.viewChannel("unknown-id")).toThrow("Channel not found");
+    const fn = () => res.channelController.viewChannel("unknown-id");
+    expect(fn).toThrow(ReservoirError);
+    try { fn(); } catch (e) {
+      expect((e as ReservoirError).code).toBe(ErrorCodes.CHANNEL_NOT_FOUND);
+    }
   });
 });
 
@@ -520,6 +545,57 @@ describe("fetchChannel", () => {
     expect(markdownFiles).toEqual(["dup-1.md", "dup.md"]);
     expect(res.contentController.listContent({ channelIds: [ch.id] })).toHaveLength(2);
   });
+
+  it("throws CHANNEL_NOT_FOUND when fetching a non-existent channel", async () => {
+    const res = makeReservoir();
+    await expect(res.fetchChannel("no-such-channel")).rejects.toThrow(ReservoirError);
+    await expect(res.fetchChannel("no-such-channel")).rejects.toMatchObject({
+      code: ErrorCodes.CHANNEL_NOT_FOUND,
+    });
+  });
+});
+
+// ─── addFetcher ───────────────────────────────────────────────────────────────
+
+describe("addFetcher", () => {
+  function assertAddFetcherError(
+    res: Reservoir,
+    path: string,
+    expectedCode: ErrorCode,
+  ): void {
+    const fn = () => res.addFetcher(path);
+    expect(fn).toThrow(ReservoirError);
+    try {
+      fn();
+    } catch (e) {
+      expect((e as ReservoirError).code).toBe(expectedCode);
+    }
+  }
+
+  it("throws FETCHER_NOT_FOUND when the source path does not exist", async () => {
+    const res = makeReservoir();
+    assertAddFetcherError(res, "/nonexistent/fetcher", ErrorCodes.FETCHER_NOT_FOUND);
+  });
+
+  it("throws FETCHER_ALREADY_EXISTS when a fetcher with the same name is already installed", async () => {
+    const res = makeReservoir();
+    const fetcherPath = path.join(tmpDir, "dup-fetcher.sh");
+    fs.writeFileSync(fetcherPath, "#!/bin/sh\necho 'test'", "utf-8");
+    fs.chmodSync(fetcherPath, 0o755);
+
+    const first = res.addFetcher(fetcherPath);
+    expect(first.name).toBe("dup-fetcher.sh");
+
+    assertAddFetcherError(res, fetcherPath, ErrorCodes.FETCHER_ALREADY_EXISTS);
+  });
+
+  it("throws INVALID_INPUT when the source path is a directory, not a file", async () => {
+    const res = makeReservoir();
+    const dirPath = path.join(tmpDir, "not-a-file");
+    fs.mkdirSync(dirPath, { recursive: true });
+
+    assertAddFetcherError(res, dirPath, ErrorCodes.INVALID_INPUT);
+  });
 });
 
 // ─── editChannel ─────────────────────────────────────────────────────────────
@@ -604,8 +680,11 @@ describe("deleteChannel", () => {
   it("throws when deleting non-existent channel", async () => {
     const res = makeReservoir();
     await expect(res.channelController.deleteChannel("no-such-id")).rejects.toThrow(
-      "Channel not found",
+      ReservoirError,
     );
+    await expect(res.channelController.deleteChannel("no-such-id")).rejects.toMatchObject({
+      code: ErrorCodes.CHANNEL_NOT_FOUND,
+    });
   });
 });
 
@@ -889,9 +968,54 @@ describe("listContent", () => {
       content: ["---", 'status: "read"', "---", "", "# Body"].join("\n"),
     });
 
-    expect(() => res.contentController.readContentFrontmatter("fm-read-3", "   ")).toThrow(
-      "Frontmatter key must not be empty",
-    );
+    const fnEmptyKey = () => res.contentController.readContentFrontmatter("fm-read-3", "   ");
+    expect(fnEmptyKey).toThrow(ReservoirError);
+    try {
+      fnEmptyKey();
+    } catch (e) {
+      expect((e as ReservoirError).code).toBe(ErrorCodes.INVALID_INPUT);
+    }
+  });
+
+  it("throws CONTENT_FILE_NOT_FOUND when backing file is deleted", async () => {
+    const res = makeReservoir();
+    const ch = await res.channelController.addChannel({
+      name: "Missing file test",
+      fetchMethod: FetchMethod.RSS,
+      fetchParams: { url: "u" },
+    });
+    addTestItem(res, ch.id, { id: "del-file", content: "# Gone", locks: [] });
+    const file = contentPathForId(ch.id, "del-file");
+    expect(file).not.toBeNull();
+    fs.unlinkSync(file!);
+
+    const fn = () => res.contentController.readContentFrontmatterMap("del-file");
+    expect(fn).toThrow(ReservoirError);
+    try {
+      fn();
+    } catch (e) {
+      expect((e as ReservoirError).code).toBe(ErrorCodes.CONTENT_FILE_NOT_FOUND);
+    }
+  });
+
+  it("throws CONTENT_FILE_NOT_FOUND from writeContentFrontmatter when backing file is missing", async () => {
+    const res = makeReservoir();
+    const ch = await res.channelController.addChannel({
+      name: "Missing file write",
+      fetchMethod: FetchMethod.RSS,
+      fetchParams: { url: "u" },
+    });
+    addTestItem(res, ch.id, { id: "del-write", content: "# Write test", locks: [] });
+    const file = contentPathForId(ch.id, "del-write");
+    expect(file).not.toBeNull();
+    fs.unlinkSync(file!);
+
+    await expect(
+      res.contentController.writeContentFrontmatter("del-write", { status: "updated" }),
+    ).rejects.toThrow(ReservoirError);
+    await expect(
+      res.contentController.writeContentFrontmatter("del-write", { status: "updated" }),
+    ).rejects.toMatchObject({ code: ErrorCodes.CONTENT_FILE_NOT_FOUND });
   });
 
   it("removes frontmatter keys when update value is null", async () => {
@@ -964,8 +1088,11 @@ describe("retainContent / releaseContent", () => {
   it("throws for non-existent content id", async () => {
     const res = makeReservoir();
     await expect(res.lockController.retainContent("no-such-id")).rejects.toThrow(
-      "Content not found",
+      ReservoirError,
     );
+    await expect(res.lockController.retainContent("no-such-id")).rejects.toMatchObject({
+      code: ErrorCodes.CONTENT_NOT_FOUND,
+    });
   });
 
   it("rejects lock names containing commas", async () => {
@@ -1326,8 +1453,11 @@ describe("retainContentRange / releaseContentRange", () => {
     addTestItem(res, ch.id, { id: "50", fetchedAt: "2024-01-01T00:00:00.000Z", locks: [] });
 
     await expect(res.lockController.retainContentRange({ fromId: "999" })).rejects.toThrow(
-      "Start ID not found: 999",
+      ReservoirError,
     );
+    await expect(res.lockController.retainContentRange({ fromId: "999" })).rejects.toMatchObject({
+      code: ErrorCodes.ID_NOT_FOUND,
+    });
   });
 
   it("throws if toId not found", async () => {
@@ -1341,8 +1471,11 @@ describe("retainContentRange / releaseContentRange", () => {
     addTestItem(res, ch.id, { id: "60", fetchedAt: "2024-01-01T00:00:00.000Z", locks: [] });
 
     await expect(res.lockController.retainContentRange({ toId: "999" })).rejects.toThrow(
-      "End ID not found: 999",
+      ReservoirError,
     );
+    await expect(res.lockController.retainContentRange({ toId: "999" })).rejects.toMatchObject({
+      code: ErrorCodes.ID_NOT_FOUND,
+    });
   });
 
   it("throws if fromId comes after toId temporally", async () => {
@@ -1358,7 +1491,10 @@ describe("retainContentRange / releaseContentRange", () => {
 
     await expect(
       res.lockController.retainContentRange({ fromId: "71", toId: "70" }),
-    ).rejects.toThrow("Invalid range: fromId");
+    ).rejects.toThrow(ReservoirError);
+    await expect(
+      res.lockController.retainContentRange({ fromId: "71", toId: "70" }),
+    ).rejects.toMatchObject({ code: ErrorCodes.INVALID_RANGE });
   });
 
   it("handles single-item range", async () => {
@@ -1383,5 +1519,15 @@ describe("retainContentRange / releaseContentRange", () => {
     // ID 80 has no locks, won't appear in retained list
     expect(allItems.find((x) => x.id === "80")).toBeUndefined();
     expect(allItems.find((x) => x.id === "81")?.locks).toEqual(["single"]);
+  });
+
+  it("throws INVALID_INPUT for non-numeric range IDs", async () => {
+    const res = makeReservoir();
+    await expect(
+      res.lockController.retainContentRange({ fromId: "abc" }),
+    ).rejects.toMatchObject({ code: ErrorCodes.INVALID_INPUT });
+    await expect(
+      res.lockController.retainContentRange({ toId: "xyz" }),
+    ).rejects.toMatchObject({ code: ErrorCodes.INVALID_INPUT });
   });
 });

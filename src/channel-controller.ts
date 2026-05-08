@@ -15,6 +15,7 @@ import { RelativePathHelper } from "./relative-path-helper";
 import { writeJSONAtomic, writeJSONAtomicSync } from "./atomic-writes";
 import { ContentParser } from "./content-parser";
 import type { ChannelController } from "./interfaces";
+import { ReservoirError, ErrorCodes } from "./errors";
 
 const RES_METADATA_DIR = ".res";
 const CHANNELS_DIR = "channels";
@@ -167,19 +168,19 @@ export class ChannelControllerImpl implements ChannelController {
     const metadataById = new Map(this.loadMetadata(channelId).items.map((item) => [item.id, item]));
     const state = metadataById.get(contentId);
     if (!state) {
-      throw new Error(`Content not found: ${contentId}`);
+      throw new ReservoirError(ErrorCodes.CONTENT_NOT_FOUND, `Content not found: ${contentId}`);
     }
 
     const mappedPath = this.idAllocator.getFileForId(state.id);
     const candidate = mappedPath ?? state.filePath;
     if (!candidate) {
-      throw new Error(`Unable to resolve file path for content: ${contentId}`);
+      throw new ReservoirError(ErrorCodes.UNABLE_TO_RESOLVE_FILE_PATH, `Unable to resolve file path for content: ${contentId}`);
     }
 
     const normalized = RelativePathHelper.normalizeRelativePath(candidate);
     const absolutePath = path.join(this.directory, normalized);
     if (!fs.existsSync(absolutePath) || !absolutePath.toLowerCase().endsWith(".md")) {
-      throw new Error(`Content file not found for id ${contentId}`);
+      throw new ReservoirError(ErrorCodes.CONTENT_FILE_NOT_FOUND, `Content file not found for id ${contentId}`);
     }
 
     fs.writeFileSync(absolutePath, content);
@@ -204,14 +205,16 @@ export class ChannelControllerImpl implements ChannelController {
           }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          throw new Error(
+          throw new ReservoirError(
+            ErrorCodes.FETCH_FAILED,
             `Failed to inspect content file ${filePath} for channel ${channelId}: ${message}`,
           );
         }
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      throw new Error(
+      throw new ReservoirError(
+        ErrorCodes.FETCH_FAILED,
         `Failed to resolve existing content by URL in channel ${channelId}: ${message}`,
       );
     }
@@ -229,7 +232,7 @@ export class ChannelControllerImpl implements ChannelController {
   resolveChannelDir(channelId: string): string {
     const channelsDir = this.resolveChannelMetadataRoot();
     if (!fs.existsSync(channelsDir)) {
-      throw new Error(`Channel not found: ${channelId}`);
+      throw new ReservoirError(ErrorCodes.CHANNEL_NOT_FOUND, `Channel not found: ${channelId}`);
     }
 
     const directPath = path.join(channelsDir, channelId);
@@ -261,7 +264,7 @@ export class ChannelControllerImpl implements ChannelController {
       }
     }
 
-    throw new Error(`Channel not found: ${channelId}`);
+    throw new ReservoirError(ErrorCodes.CHANNEL_NOT_FOUND, `Channel not found: ${channelId}`);
   }
 
   async addChannel(config: ChannelConfig): Promise<Channel> {

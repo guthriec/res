@@ -10,6 +10,7 @@ import { EvictionControllerImpl } from "./eviction-controller";
 import { FetchOrchestrator } from "./fetch-orchestrator";
 import { FilesystemSynchronizer } from "./filesystem-synchronizer";
 import type { Reservoir } from "./interfaces";
+import { ReservoirError, ErrorCodes } from "./errors";
 
 const CONFIG_FILE = ".res-config.json";
 const RES_METADATA_DIR = ".res";
@@ -78,7 +79,7 @@ export class ReservoirImpl implements Reservoir {
     const absDir = this.dir;
     const configPath = path.join(absDir, CONFIG_FILE);
     if (!fs.existsSync(configPath)) {
-      throw new Error(`No reservoir found at ${absDir}. Run 'res init' first.`);
+      throw new ReservoirError(ErrorCodes.RESERVOIR_NOT_FOUND, `No reservoir found at ${absDir}. Run 'res init' first.`);
     }
     this.config = JSON.parse(fs.readFileSync(configPath, "utf-8")) as ReservoirConfig;
     return this;
@@ -92,7 +93,8 @@ export class ReservoirImpl implements Reservoir {
     const nearestDir = ReservoirImpl.findNearestDirectory(startDir);
     if (!nearestDir) {
       const absStart = path.resolve(startDir);
-      throw new Error(
+      throw new ReservoirError(
+        ErrorCodes.RESERVOIR_NOT_FOUND,
         `No reservoir found from ${absStart} upward. Run 'res init' in this directory or pass --dir <path>.`,
       );
     }
@@ -128,7 +130,7 @@ export class ReservoirImpl implements Reservoir {
 
   async setMaxSizeMB(maxSizeMB: number): Promise<ReservoirConfig> {
     if (!Number.isFinite(maxSizeMB) || maxSizeMB <= 0) {
-      throw new Error(`Invalid max size '${maxSizeMB}'. Expected a positive number.`);
+      throw new ReservoirError(ErrorCodes.INVALID_INPUT, `Invalid max size '${maxSizeMB}'. Expected a positive number.`);
     }
 
     const previousMaxSizeMB = this.config.maxSizeMB;
@@ -145,18 +147,18 @@ export class ReservoirImpl implements Reservoir {
   addFetcher(executablePath: string): { name: string; destinationPath: string } {
     const sourcePath = path.resolve(executablePath);
     if (!fs.existsSync(sourcePath)) {
-      throw new Error(`Fetcher executable not found: ${sourcePath}`);
+      throw new ReservoirError(ErrorCodes.FETCHER_NOT_FOUND, `Fetcher executable not found: ${sourcePath}`);
     }
     const sourceStat = fs.statSync(sourcePath);
     if (!sourceStat.isFile()) {
-      throw new Error(`Fetcher path is not a file: ${sourcePath}`);
+      throw new ReservoirError(ErrorCodes.INVALID_INPUT, `Fetcher path is not a file: ${sourcePath}`);
     }
 
     const name = path.basename(sourcePath);
     const fetchersDir = this.customFetchersDirectory;
     const destinationPath = path.join(fetchersDir, name);
     if (fs.existsSync(destinationPath)) {
-      throw new Error(`Fetcher already exists: ${name}`);
+      throw new ReservoirError(ErrorCodes.FETCHER_ALREADY_EXISTS, `Fetcher already exists: ${name}`);
     }
 
     fs.mkdirSync(fetchersDir, { recursive: true });

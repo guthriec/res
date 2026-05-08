@@ -8,6 +8,7 @@ import type {
   LockController,
   EvictionController,
 } from "../interfaces";
+import { ReservoirError, ErrorCodes } from "../errors";
 
 interface FakeState {
   channels: Map<string, Channel>;
@@ -62,7 +63,7 @@ class ChannelControllerFake implements ChannelController {
 
   async deleteChannel(channelId: string): Promise<void> {
     if (!this.state.channels.has(channelId)) {
-      throw new Error(`Channel not found: ${channelId}`);
+      throw new ReservoirError(ErrorCodes.CHANNEL_NOT_FOUND, `Channel not found: ${channelId}`);
     }
     this.state.channels.delete(channelId);
     this.state.content = this.state.content.filter((item) => item.channelId !== channelId);
@@ -70,7 +71,7 @@ class ChannelControllerFake implements ChannelController {
 
   viewChannel(channelId: string): Channel {
     const channel = this.state.channels.get(channelId);
-    if (!channel) throw new Error(`Channel not found: ${channelId}`);
+    if (!channel) throw new ReservoirError(ErrorCodes.CHANNEL_NOT_FOUND, `Channel not found: ${channelId}`);
     return channel;
   }
 
@@ -119,7 +120,7 @@ class ContentControllerFake implements ContentController {
   readContentFrontmatterMap(contentId: string): Record<string, string> {
     const item = this.state.content.find((candidate) => candidate.id === contentId);
     if (!item) {
-      throw new Error(`Content not found: ${contentId}`);
+      throw new ReservoirError(ErrorCodes.CONTENT_NOT_FOUND, `Content not found: ${contentId}`);
     }
 
     return ContentParser.parseInlineFrontmatter(item.content);
@@ -128,7 +129,7 @@ class ContentControllerFake implements ContentController {
   readContentFrontmatter(contentId: string, key: string): string | undefined {
     const normalizedKey = key.trim();
     if (!normalizedKey) {
-      throw new Error("Frontmatter key must not be empty");
+      throw new ReservoirError(ErrorCodes.INVALID_INPUT, "Frontmatter key must not be empty");
     }
 
     const fields = this.readContentFrontmatterMap(contentId);
@@ -141,7 +142,7 @@ class ContentControllerFake implements ContentController {
   ): Promise<ContentItem> {
     const item = this.state.content.find((candidate) => candidate.id === contentId);
     if (!item) {
-      throw new Error(`Content not found: ${contentId}`);
+      throw new ReservoirError(ErrorCodes.CONTENT_NOT_FOUND, `Content not found: ${contentId}`);
     }
 
     const content = ContentParser.writeInlineFrontmatter(item.content, updates);
@@ -161,7 +162,7 @@ class LockControllerFake implements LockController {
 
   async retainContent(contentId: string, lockName: string = GLOBAL_LOCK_NAME): Promise<void> {
     const item = this.state.content.find((i) => i.id === contentId);
-    if (!item) throw new Error(`Content not found: ${contentId}`);
+    if (!item) throw new ReservoirError(ErrorCodes.CONTENT_NOT_FOUND, `Content not found: ${contentId}`);
     if (!item.locks.includes(lockName)) {
       item.locks = [...item.locks, lockName];
     }
@@ -169,7 +170,7 @@ class LockControllerFake implements LockController {
 
   async releaseContent(contentId: string, lockName: string = GLOBAL_LOCK_NAME): Promise<void> {
     const item = this.state.content.find((i) => i.id === contentId);
-    if (!item) throw new Error(`Content not found: ${contentId}`);
+    if (!item) throw new ReservoirError(ErrorCodes.CONTENT_NOT_FOUND, `Content not found: ${contentId}`);
     item.locks = item.locks.filter((name) => name !== lockName);
   }
 
@@ -193,7 +194,7 @@ class LockControllerFake implements LockController {
 
   async retainChannel(channelId: string, lockName: string = GLOBAL_LOCK_NAME): Promise<Channel> {
     const channel = this.state.channels.get(channelId);
-    if (!channel) throw new Error(`Channel not found: ${channelId}`);
+    if (!channel) throw new ReservoirError(ErrorCodes.CHANNEL_NOT_FOUND, `Channel not found: ${channelId}`);
     const retainedLocks = channel.retainedLocks.includes(lockName)
       ? channel.retainedLocks
       : [...channel.retainedLocks, lockName];
@@ -204,7 +205,7 @@ class LockControllerFake implements LockController {
 
   async releaseChannel(channelId: string, lockName: string = GLOBAL_LOCK_NAME): Promise<Channel> {
     const channel = this.state.channels.get(channelId);
-    if (!channel) throw new Error(`Channel not found: ${channelId}`);
+    if (!channel) throw new ReservoirError(ErrorCodes.CHANNEL_NOT_FOUND, `Channel not found: ${channelId}`);
     const retainedLocks = channel.retainedLocks.filter((name) => name !== lockName);
     const updated = { ...channel, retainedLocks };
     this.state.channels.set(channelId, updated);
@@ -223,10 +224,10 @@ class LockControllerFake implements LockController {
     const fromIdNum = fromId ? Number(fromId) : -Infinity;
     const toIdNum = toId ? Number(toId) : Infinity;
 
-    if (fromId && isNaN(fromIdNum)) throw new Error(`Invalid start ID: ${fromId}`);
-    if (toId && isNaN(toIdNum)) throw new Error(`Invalid end ID: ${toId}`);
+    if (fromId && isNaN(fromIdNum)) throw new ReservoirError(ErrorCodes.INVALID_INPUT, `Invalid start ID: ${fromId}`);
+    if (toId && isNaN(toIdNum)) throw new ReservoirError(ErrorCodes.INVALID_INPUT, `Invalid end ID: ${toId}`);
     if (fromIdNum > toIdNum)
-      throw new Error(`Invalid range: fromId (${fromId}) comes after toId (${toId})`);
+      throw new ReservoirError(ErrorCodes.INVALID_RANGE, `Invalid range: fromId (${fromId}) comes after toId (${toId})`);
 
     let candidates = this.state.content;
     if (channelId) {
@@ -252,8 +253,8 @@ class LockControllerFake implements LockController {
       }
     }
 
-    if (!foundFrom) throw new Error(`Start ID not found: ${fromId}`);
-    if (!foundTo) throw new Error(`End ID not found: ${toId}`);
+    if (!foundFrom) throw new ReservoirError(ErrorCodes.ID_NOT_FOUND, `Start ID not found: ${fromId}`);
+    if (!foundTo) throw new ReservoirError(ErrorCodes.ID_NOT_FOUND, `End ID not found: ${toId}`);
     return count;
   }
 }
