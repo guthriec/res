@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import { createDirectoryWatcher } from "./file-watcher";
 import { Channel, DEFAULT_REFRESH_INTERVAL_SECONDS } from "./types";
 import { ReservoirImpl } from "./reservoir";
 import { Logger, type LogLevel } from "./logger";
@@ -301,6 +302,15 @@ export async function runBackgroundFetchWorkerStep(
     onFetchError?: (channelId: string, message: string) => void;
   } = {},
 ): Promise<void> {
+  // Detect local file changes before scheduling fetches
+  try {
+    const { ChangeDetector } = await import("./change-detector");
+    const detector = new ChangeDetector(path.resolve(reservoirDir));
+    await detector.scanAll();
+  } catch {
+    // non-fatal — change detection is a best-effort step
+  }
+
   await runScheduledFetchStep(reservoir, state, nowMs, hooks);
   writeBackgroundFetchWorkerStatusFile(path.resolve(reservoirDir), {
     pid: process.pid,
@@ -378,44 +388,14 @@ function watchChannelsForResync(
   reservoir: ReservoirImpl,
   emit: WorkerEmit,
 ): () => void {
-  let pendingResync: NodeJS.Timeout | undefined;
-  let channelsWatcher: fs.FSWatcher | undefined;
-
-  const scheduleResync = (): void => {
-    if (pendingResync) {
-      clearTimeout(pendingResync);
-    }
-    pendingResync = setTimeout(() => {
-      void reservoir.syncContentTracking().catch((err: unknown) => {
-        const message = err instanceof Error ? err.message : String(err);
-        emit("error", `[sync] failed: ${message}`);
-      });
-    }, 250);
-  };
-
   const channelsDir = path.join(absDir, ".res", "channels");
-  if (fs.existsSync(channelsDir)) {
-    try {
-      channelsWatcher = fs.watch(channelsDir, { recursive: true }, () => {
-        scheduleResync();
-      });
-    } catch {
-      channelsWatcher = undefined;
-    }
-  }
 
-  const close = (): void => {
-    if (pendingResync) {
-      clearTimeout(pendingResync);
-      pendingResync = undefined;
-    }
-    if (channelsWatcher) {
-      channelsWatcher.close();
-      channelsWatcher = undefined;
-    }
-  };
-
-  return close;
+  return createDirectoryWatcher(channelsDir, () => {
+    reservoir.syncContentTracking().catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      emit("error", `[sync] failed: ${message}`);
+    });
+  });
 }
 
 function registerShutdownHandlers(shutdown: () => void): () => void {

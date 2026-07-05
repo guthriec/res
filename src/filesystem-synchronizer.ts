@@ -4,6 +4,7 @@ import { ContentIdAllocator } from "./content-id-allocator";
 import { ChannelControllerImpl } from "./channel-controller";
 import { Logger } from "./logger";
 import { RelativePathHelper } from "./relative-path-helper";
+import { VersionStore } from "./version-store";
 
 interface FilesystemSynchronizerDependencies {
   reservoirDir: string;
@@ -26,9 +27,18 @@ export class FilesystemSynchronizer {
     const logger = Logger.fromEnvironment();
     const channels = this.channelController.listChannels();
     let cachedMappings = this.idAllocator.loadMappings();
-    const staleIds = Object.entries(cachedMappings)
-      .filter(([, relPath]) => !fs.existsSync(path.join(this.reservoirDir, relPath)))
-      .map(([id]) => id);
+    // Remove mappings only for files that are truly gone — if a sidecar
+    // exists (tombstoned), preserve the mapping so sync can reference it.
+    const staleIds: string[] = [];
+    for (const [id, relPath] of Object.entries(cachedMappings)) {
+      const absPath = path.join(this.reservoirDir, relPath);
+      if (!fs.existsSync(absPath)) {
+        const scPath = VersionStore.sidecarPath(absPath);
+        if (!fs.existsSync(scPath)) {
+          staleIds.push(id);
+        }
+      }
+    }
     await Promise.all(staleIds.map((id) => this.idAllocator.removeMappingById(id)));
     // Reload mappings after removals to pick up any concurrent mutations
     cachedMappings = this.idAllocator.loadMappings();
@@ -47,8 +57,14 @@ export class FilesystemSynchronizer {
           return false;
         }
         const normalizedCandidatePath = RelativePathHelper.normalizeRelativePath(candidatePath);
-        const exists = fs.existsSync(path.join(this.reservoirDir, normalizedCandidatePath));
+        const absPath = path.join(this.reservoirDir, normalizedCandidatePath);
+        const exists = fs.existsSync(absPath);
         if (!exists) {
+          // Preserve metadata for tombstoned files (sidecar exists)
+          const scPath = VersionStore.sidecarPath(absPath);
+          if (fs.existsSync(scPath)) {
+            return true;
+          }
           metadataChanged = true;
           orphanedRemoved += 1;
         }

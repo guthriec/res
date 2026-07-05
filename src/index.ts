@@ -35,3 +35,10 @@ export {
 } from "./background-fetch-worker";
 export { ReservoirError, ErrorCodes } from "./errors";
 export type { ErrorCode } from "./errors";
+export { createDirectoryWatcher } from "./file-watcher";
+export type { DirectoryWatcherOptions } from "./file-watcher";
+export { VersionStore } from "./version-store";
+export type { ContentVersion, VersionSidecar } from "./version-store";
+export { ChangeDetector } from "./change-detector";
+export { UnsafeAutoMerge } from "./merge-strategy";
+export type { MergeParams, MergeStrategy, Diff3Region } from "./merge-strategy";
