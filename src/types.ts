@@ -29,6 +29,8 @@ export interface ChannelConfig {
   duplicateStrategy?: DuplicateStrategy;
   /** Lock names to apply automatically to newly fetched content */
   retainedLocks?: string[];
+  /** Whether this channel is shared via res serve */
+  shared?: boolean;
 }
 
 export interface Channel extends Omit<ChannelConfig, "refreshInterval" | "retainedLocks"> {

@@ -16,11 +16,20 @@ export interface ContentVersion {
   author?: string;
 }
 
+export interface SyncSource {
+  serverUrl: string;
+  serverChannelId: string;
+}
+
 export interface VersionSidecar {
   /** The ContentIdAllocator-managed document ID for this file */
   contentId: string;
   /** Ordered list of versions forming the DAG (newest last) */
   chain: ContentVersion[];
+  /** Sync: the last version published/acknowledged by the server. */
+  lastPublishedVersionId?: string;
+  /** Sync: identifies which subscription this file belongs to. */
+  source?: SyncSource;
 }
 
 export class VersionStore {
@@ -78,6 +87,27 @@ export class VersionStore {
     if (!sidecar) return false;
     const tip = sidecar.chain[sidecar.chain.length - 1];
     return tip?.hash === null;
+  }
+
+  /**
+   * Walk two chains backward to find the last common ancestor by matching
+   * content hashes. This works across different reservoirs where version IDs
+   * may not align — only the content hash is globally meaningful.
+   */
+  static findLCAbyHash(
+    a: ContentVersion[],
+    b: ContentVersion[],
+  ): ContentVersion | null {
+    if (a.length === 0 || b.length === 0) return null;
+    const hashesA = new Set<string>();
+    for (const v of a) {
+      if (v.hash !== null) hashesA.add(v.hash);
+    }
+    for (let i = b.length - 1; i >= 0; i--) {
+      const h = b[i].hash;
+      if (h !== null && hashesA.has(h)) return b[i];
+    }
+    return null;
   }
 
   /**
