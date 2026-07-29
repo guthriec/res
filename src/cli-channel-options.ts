@@ -18,6 +18,8 @@ export interface ChannelEditCliOptions {
   refreshInterval?: string;
   idField?: string;
   duplicateStrategy?: string;
+  share?: boolean;
+  unshare?: boolean;
 }
 
 export function parseDuplicateStrategy(value: string | undefined): DuplicateStrategy | undefined {
@@ -54,5 +56,7 @@ export function buildChannelEditUpdates(
   if (opts.duplicateStrategy !== undefined) {
     updates.duplicateStrategy = parseDuplicateStrategy(opts.duplicateStrategy);
   }
+  if (opts.share) updates.shared = true;
+  if (opts.unshare) updates.shared = false;
   return updates;
 }

@@ -222,6 +222,14 @@ export class ChannelControllerImpl implements ChannelController {
   }
 
   resolveChannelContentRoot(channelId: string): string {
+    try {
+      const channel = this.viewChannel(channelId);
+      if (channel.contentRoot !== undefined) {
+        return path.join(this.directory, channel.contentRoot);
+      }
+    } catch {
+      // Channel not found — fall back to default
+    }
     return path.join(this.directory, channelId);
   }
 
@@ -289,6 +297,8 @@ export class ChannelControllerImpl implements ChannelController {
       idField: InputNormalizer.idField(config.idField),
       duplicateStrategy: InputNormalizer.duplicateStrategy(config.duplicateStrategy),
       retainedLocks: InputNormalizer.locks(config.retainedLocks, { validateNames: true }),
+      shared: config.shared === true ? true : undefined,
+      contentRoot: config.contentRoot,
     };
 
     const channelDir = path.join(channelsDir, channelDirName);

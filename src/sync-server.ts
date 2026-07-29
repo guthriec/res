@@ -126,10 +126,26 @@ export class SyncServer {
 
   // ─── Request routing ──────────────────────────────────────────────────────
 
-  private handleRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
+  private addCorsHeaders(res: http.ServerResponse): void {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    res.setHeader("Access-Control-Max-Age", "86400");
+  }
+
+  private async handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+    this.addCorsHeaders(res);
+
     const parsed = url.parse(req.url ?? "", true);
     const method = req.method ?? "GET";
     const pathname = parsed.pathname ?? "";
+
+    // Handle CORS preflight
+    if (method === "OPTIONS") {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
 
     try {
       if (!pathname.startsWith(API_PREFIX)) {
@@ -161,15 +177,31 @@ export class SyncServer {
       }
 
       if (publishMatch && method === "POST") {
-        this.handlePublish(publishMatch[1], req, res);
+        await this.handlePublish(publishMatch[1], req, res);
         return;
       }
 
+      // Log unmatched routes for debugging
+      this.logger.debug(`[sync-server] unmatched route: ${method} ${pathname}`);
       this.writeJson(res, 404, { error: "not found" });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(`[sync-server] request error: ${message}`);
       this.writeJson(res, 500, { error: message });
+    }
+  }
+
+  /**
+   * Log all shared channels for debugging.
+   */
+  private logChannelState(resource: string, channelId: string): void {
+    try {
+      const channel = this.channelController.viewChannel(channelId);
+      this.logger.info(
+        `[sync-server] ${resource}: channel "${channelId}" shared=${channel.shared === true}`,
+      );
+    } catch {
+      this.logger.info(`[sync-server] ${resource}: channel "${channelId}" NOT FOUND`);
     }
   }
 
@@ -183,13 +215,35 @@ export class SyncServer {
     this.writeJson(res, 200, channels);
   }
 
+  private collectMdFiles(dir: string, baseDir: string): SyncContentItem[] {
+    const items: SyncContentItem[] = [];
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return items;
+    }
+    for (const entry of entries) {
+      const absPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        items.push(...this.collectMdFiles(absPath, baseDir));
+      } else if (entry.name.endsWith(".md") && !entry.name.endsWith(".res-version.json")) {
+        const content = fs.readFileSync(absPath, "utf-8");
+        const sidecar = this.versionStore.read(absPath);
+        const filename = path.relative(baseDir, absPath);
+        items.push({ filename, content, versionChain: sidecar?.chain ?? [] });
+      }
+    }
+    return items;
+  }
+
   private handleGetChannelContent(channelId: string, res: http.ServerResponse): void {
     if (!this.isChannelShared(channelId)) {
+      this.logChannelState("get-content", channelId);
       this.writeJson(res, 404, { error: "channel not found" });
       return;
     }
 
-    const items: SyncContentItem[] = [];
     const contentRoot = this.channelController.resolveChannelContentRoot(channelId);
 
     if (!fs.existsSync(contentRoot)) {
@@ -197,30 +251,17 @@ export class SyncServer {
       return;
     }
 
-    const entries = fs.readdirSync(contentRoot, { withFileTypes: true });
-    for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
-      if (entry.name.endsWith(".res-version.json")) continue;
-
-      const mdPath = path.join(contentRoot, entry.name);
-      const content = fs.readFileSync(mdPath, "utf-8");
-      const sidecar = this.versionStore.read(mdPath);
-
-      items.push({
-        filename: entry.name,
-        content,
-        versionChain: sidecar?.chain ?? [],
-      });
-    }
-
+    const items = this.collectMdFiles(contentRoot, contentRoot);
     this.writeJson(res, 200, { items });
   }
 
   private handleSseSubscribe(channelId: string, res: http.ServerResponse): void {
     if (!this.isChannelShared(channelId)) {
+      this.logChannelState("sse-subscribe", channelId);
       this.writeJson(res, 404, { error: "channel not found" });
       return;
     }
+    this.logger.info(`[sync-server] sse-subscribe: channel "${channelId}"`);
 
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
@@ -275,9 +316,8 @@ export class SyncServer {
     }
 
     const contentRoot = this.channelController.resolveChannelContentRoot(channelId);
-    fs.mkdirSync(contentRoot, { recursive: true });
-
     const mdPath = path.join(contentRoot, publishReq.filename);
+    fs.mkdirSync(path.dirname(mdPath), { recursive: true });
     const mdExists = fs.existsSync(mdPath);
 
     let serverContent: string;
@@ -450,6 +490,44 @@ export class SyncServer {
     res.end(JSON.stringify(data));
   }
 
+  private scanDirForChanges(channelId: string, dir: string, baseDir: string): void {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const absPath = path.join(dir, entry.name);
+      const relPath = path.relative(baseDir, absPath);
+
+      if (entry.isDirectory()) {
+        this.scanDirForChanges(channelId, absPath, baseDir);
+        continue;
+      }
+
+      if (!entry.name.endsWith(".md") || entry.name.endsWith(".res-version.json")) continue;
+
+      const sidecar = this.versionStore.read(absPath);
+      if (!sidecar) continue;
+
+      const tip = sidecar.chain[sidecar.chain.length - 1];
+      const currentHash = VersionStore.hashFile(absPath);
+      if (currentHash === null) {
+        this.pushSseEvent(channelId, {
+          type: "content-deleted",
+          data: { channelId, filename: relPath },
+        });
+      } else if (tip && tip.hash !== currentHash) {
+        const content = fs.readFileSync(absPath, "utf-8");
+        this.pushSseEvent(channelId, {
+          type: "content-updated",
+          data: { channelId, filename: relPath, content, versionChain: sidecar.chain },
+        });
+      }
+    }
+  }
+
   private startWatchingSharedChannels(): void {
     const sharedChannels = this.channelController
       .listChannels()
@@ -464,37 +542,7 @@ export class SyncServer {
         const contentRoot = this.channelController.resolveChannelContentRoot(channel.id);
         if (!fs.existsSync(contentRoot)) continue;
 
-        const entries = fs.readdirSync(contentRoot, { withFileTypes: true });
-        for (const entry of entries) {
-          if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
-          if (entry.name.endsWith(".res-version.json")) continue;
-
-          const mdPath = path.join(contentRoot, entry.name);
-          const sidecar = this.versionStore.read(mdPath);
-          if (!sidecar) continue;
-
-          const tip = sidecar.chain[sidecar.chain.length - 1];
-          const currentHash = VersionStore.hashFile(mdPath);
-          if (currentHash === null) {
-            // File was deleted — push delete event
-            this.pushSseEvent(channel.id, {
-              type: "content-deleted",
-              data: { channelId: channel.id, filename: entry.name },
-            });
-          } else if (tip && tip.hash !== currentHash) {
-            // File was modified — push update event
-            const content = fs.readFileSync(mdPath, "utf-8");
-            this.pushSseEvent(channel.id, {
-              type: "content-updated",
-              data: {
-                channelId: channel.id,
-                filename: entry.name,
-                content,
-                versionChain: sidecar.chain,
-              },
-            });
-          }
-        }
+        this.scanDirForChanges(channel.id, contentRoot, contentRoot);
       }
     });
   }

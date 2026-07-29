@@ -74,10 +74,15 @@ export class SyncClient {
     // 1. Initial pull
     await this.initialPull();
 
-    // 2. Start SSE subscription (runs concurrently)
+    // 2. Scan for local changes so they get sidecars before publish loop starts
+    this.logger.debug("[sync] scanning local files for changes...");
+    await this.changeDetector.scanAll();
+
+    // 3. Start SSE subscription (runs concurrently)
     this.runSseLoop();
 
-    // 3. Start publish loop
+    // 4. Start publish loop
+    this.logger.debug(`[sync] publish loop every ${PUBLISH_TICK_MS / 1000}s`);
     this.publishTimer = setInterval(() => this.publishIfNeeded(), PUBLISH_TICK_MS);
   }
 
@@ -89,25 +94,38 @@ export class SyncClient {
     }
   }
 
+  /**
+   * Trigger an immediate publish cycle. Safe to call frequently — internally
+   * debounces via scanAll which skips unchanged files. Designed to be called
+   * from Obsidian vault events.
+   */
+  async triggerPublish(): Promise<void> {
+    if (this.stopRequested) return;
+    await this.publishIfNeeded();
+  }
+
   // ─── Initial pull ─────────────────────────────────────────────────────────
 
   private async initialPull(): Promise<void> {
+    const pullStart = Date.now();
     const baseUrl = this.subscription.serverUrl.replace(/\/+$/, "");
     const url = `${baseUrl}/api/v1/channels/${this.subscription.serverChannelId}/content`;
 
+    this.logger.debug(`[sync] initial pull from ${url}`);
     try {
       const response = await fetch(url);
       if (!response.ok) {
-        this.logger.error(`[sync] initial pull failed: ${response.status}`);
+        this.logger.error(`[sync] initial pull failed: ${response.status} ${response.statusText}`);
         return;
       }
 
       const data = (await response.json()) as SyncContentResponse;
+      this.logger.info(`[sync] initial pull: ${data.items.length} items`);
       for (const item of data.items) {
+        this.logger.debug(`[sync] initial pull applying: ${item.filename}`);
         await this.applyServerContent(item);
       }
-
-      this.logger.info(`[sync] initial pull complete: ${data.items.length} items`);
+      this.logger.info(`[sync] initial pull done: ${data.items.length} items in ${Date.now() - pullStart}ms`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(`[sync] initial pull error: ${message}`);
@@ -124,13 +142,14 @@ export class SyncClient {
         const baseUrl = this.subscription.serverUrl.replace(/\/+$/, "");
         const url = `${baseUrl}/api/v1/channels/${this.subscription.serverChannelId}/events`;
 
+        this.logger.debug(`[sync] SSE connecting to ${url}`);
         const response = await fetch(url);
         if (!response.ok) {
           throw new Error(`SSE connection failed: ${response.status}`);
         }
 
         this.logger.debug("[sync] SSE connected");
-        reconnectDelay = SSE_RECONNECT_DELAY_MS; // reset on success
+        reconnectDelay = SSE_RECONNECT_DELAY_MS;
 
         const reader = response.body!.getReader();
         const decoder = new TextDecoder();
@@ -145,16 +164,20 @@ export class SyncClient {
           buffer = events.remaining;
 
           for (const { event, data } of events.parsed) {
+            if (event !== "heartbeat") {
+              this.logger.info(`[sync] SSE event: ${event}`);
+            }
             await this.handleSseEvent(event, data);
           }
         }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        this.logger.debug(`[sync] SSE disconnected: ${message}`);
+        this.logger.error(`[sync] SSE disconnected: ${message}`);
       }
 
       if (this.stopRequested) break;
 
+      this.logger.debug(`[sync] SSE reconnecting in ${reconnectDelay}ms`);
       await this.sleep(reconnectDelay);
       reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY_MS);
     }
@@ -199,27 +222,32 @@ export class SyncClient {
     if (event === "content-updated") {
       try {
         const eventData = JSON.parse(data) as ContentUpdatedEvent;
+        this.logger.info(`[sync] SSE content-updated: ${eventData.filename}`);
         await this.applyServerContent({
           filename: eventData.filename,
           content: eventData.content,
           versionChain: eventData.versionChain,
         });
+        this.logger.debug(`[sync] SSE applied: ${eventData.filename}`);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
-        this.logger.error(`[sync] failed to handle content-updated: ${message}`);
+        this.logger.error(`[sync] content-updated error: ${message}`);
       }
+    } else {
+      this.logger.debug(`[sync] SSE unknown event: ${event}`);
     }
   }
 
   // ─── Applying server content (pull + SSE) ─────────────────────────────────
 
   private async applyServerContent(item: SyncContentItem): Promise<void> {
+    const start = Date.now();
     const channelDir = this.channelController.resolveChannelContentRoot(
       this.subscription.localChannelId,
     );
-    fs.mkdirSync(channelDir, { recursive: true });
-
     const mdPath = path.join(channelDir, item.filename);
+    this.logger.debug(`[sync] applyServerContent: ${item.filename}`);
+    fs.mkdirSync(path.dirname(mdPath), { recursive: true });
     const mdExists = fs.existsSync(mdPath);
 
     let contentToWrite: string;
@@ -306,6 +334,8 @@ export class SyncClient {
         newChain.length > 0 ? newChain[newChain.length - 1].id : undefined,
     };
     await this.versionStore.write(mdPath, sidecar);
+    const elapsed = Date.now() - start;
+    this.logger.debug(`[sync] applyServerContent: ${item.filename} done in ${elapsed}ms`);
   }
 
   // ─── Publish loop ─────────────────────────────────────────────────────────
@@ -313,35 +343,69 @@ export class SyncClient {
   private async publishIfNeeded(): Promise<void> {
     if (this.stopRequested) return;
 
+    const scanStart = Date.now();
+    await this.changeDetector.scanAll().catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(`[sync] scanAll failed: ${message}`);
+    });
+    const scanMs = Date.now() - scanStart;
+
     const channelDir = this.channelController.resolveChannelContentRoot(
       this.subscription.localChannelId,
     );
 
-    if (!fs.existsSync(channelDir)) return;
+    if (!fs.existsSync(channelDir)) {
+      this.logger.debug(`[sync] tick: scanAll=${scanMs}ms, publish=skipped (no dir)`);
+      return;
+    }
 
-    const entries = fs.readdirSync(channelDir, { withFileTypes: true });
+    const pubStart = Date.now();
+    await this.publishFilesInDir(channelDir);
+    const pubMs = Date.now() - pubStart;
+    this.logger.info(`[sync] tick: scanAll=${scanMs}ms, publish=${pubMs}ms`);
+  }
+
+  private async publishFilesInDir(dir: string): Promise<void> {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
     for (const entry of entries) {
       if (this.stopRequested) return;
-      if (!entry.isFile() || !entry.name.endsWith(".md")) continue;
-      if (entry.name.endsWith(".res-version.json")) continue;
 
-      const mdPath = path.join(channelDir, entry.name);
-      const sidecar = this.versionStore.read(mdPath);
-      if (!sidecar || sidecar.chain.length === 0) continue;
+      const absPath = path.join(dir, entry.name);
+
+      if (entry.isDirectory()) {
+        await this.publishFilesInDir(absPath);
+        continue;
+      }
+
+      if (!entry.name.endsWith(".md") || entry.name.endsWith(".res-version.json")) continue;
+
+      const sidecar = this.versionStore.read(absPath);
+      if (!sidecar) continue;
+      if (sidecar.chain.length === 0) continue;
 
       const tip = sidecar.chain[sidecar.chain.length - 1];
       if (tip.id === sidecar.lastPublishedVersionId) continue;
 
-      // Walk the chain to find if there's an unpublised linear edit
       const unpublisedEdit = this.findUnpublisedLinearEdit(
         sidecar.chain,
         sidecar.lastPublishedVersionId,
       );
       if (!unpublisedEdit) continue;
 
-      // Publish
-      const content = fs.readFileSync(mdPath, "utf-8");
-      await this.publishContent(entry.name, content, sidecar);
+      // Use relative path from channel root so subdirectory structure is preserved
+      const channelDir = this.channelController.resolveChannelContentRoot(
+        this.subscription.localChannelId,
+      );
+      const relativePath = path.relative(channelDir, absPath);
+
+      const content = fs.readFileSync(absPath, "utf-8");
+      await this.publishContent(relativePath, content, sidecar);
     }
   }
 
@@ -350,15 +414,17 @@ export class SyncClient {
     lastPublishedVersionId: string | undefined,
   ): ContentVersion | null {
     if (!lastPublishedVersionId) {
+      // Nothing ever published: return the newest version that is either
+      // a root version (parentIds.length === 0) or a linear edit (length === 1).
       for (let i = chain.length - 1; i >= 0; i--) {
-        if (chain[i].parentIds.length === 1) return chain[i];
+        if (chain[i].parentIds.length <= 1) return chain[i];
       }
       return null;
     }
 
     for (let i = chain.length - 1; i >= 0; i--) {
       if (chain[i].id === lastPublishedVersionId) break;
-      if (chain[i].parentIds.length === 1) return chain[i];
+      if (chain[i].parentIds.length <= 1) return chain[i];
     }
     return null;
   }
@@ -377,6 +443,7 @@ export class SyncClient {
       localVersionChain: sidecar.chain,
     };
 
+    this.logger.debug(`[sync] publishing ${filename}`);
     try {
       const response = await fetch(url, {
         method: "POST",

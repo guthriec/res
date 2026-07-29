@@ -41,6 +41,7 @@ export class InputNormalizer {
       duplicateStrategy: InputNormalizer.duplicateStrategy(raw.duplicateStrategy),
       retainedLocks: InputNormalizer.locks(rawChannel.retainedLocks),
       shared: raw.shared === true ? true : undefined,
+      contentRoot: raw.contentRoot,
     };
   }
 

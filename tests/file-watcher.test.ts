@@ -85,11 +85,14 @@ describe("createDirectoryWatcher", () => {
 
     await new Promise((r) => setTimeout(r, 20));
     fs.writeFileSync(path.join(tmpDir, "a.md"), "a");
-    await new Promise((r) => setTimeout(r, debounceMs + 50));
+    await new Promise((r) => setTimeout(r, debounceMs + 100));
+    // Ensure the first callback actually fired before we proceed
+    const firstCallCount = onChange.mock.calls.length;
+    expect(firstCallCount).toBeGreaterThanOrEqual(1);
     onChange.mockClear();
 
     fs.writeFileSync(path.join(tmpDir, "b.md"), "b");
-    await new Promise((r) => setTimeout(r, debounceMs + 50));
+    await new Promise((r) => setTimeout(r, debounceMs + 100));
 
     expect(onChange).toHaveBeenCalledTimes(1);
     cleanup();

@@ -214,6 +214,8 @@ channelCmd
     "new field name in fetched item content frontmatter used for deduplication",
   )
   .option("--duplicate-strategy <strategy>", "new duplicate handling: overwrite | keep-both")
+  .option("--share", "mark channel as shared (exposed via res serve)")
+  .option("--unshare", "remove shared flag from channel")
   .action(async (id: string, opts: ChannelEditCliOptions) => {
     const reservoir = loadReservoir(getGlobalDir());
     const existing = reservoir.channelController.viewChannel(id);
@@ -486,6 +488,124 @@ contentCmd
       filePath: updated.filePath,
     };
     console.log(JSON.stringify(output, null, 2));
+  });
+
+// ─── serve ──────────────────────────────────────────────────────────────────
+
+import { SyncServer } from "./sync-server";
+import { ChannelControllerImpl } from "./channel-controller";
+import { SyncConfig, SyncSubscription, addSubscription } from "./sync-config";
+
+program
+  .command("serve")
+  .description("Start the sync HTTP server for two-way vault sync")
+  .option("--port <number>", "port to listen on (default 3030)", (v) => parseInt(v, 10), 3030)
+  .option("--host <address>", "host to bind to (default 127.0.0.1)")
+  .option("--channel <name>", "shared channel name to auto-create if missing", "shared-vault")
+  .action(async (opts: { port: number; host?: string; channel: string }) => {
+    const dir = getGlobalDir() ?? process.cwd();
+    const { mkdirSync, existsSync } = await import("fs");
+    const { join } = await import("path");
+
+    // Ensure reservoir structure
+    mkdirSync(join(dir, ".res", "channels"), { recursive: true });
+
+    const channelController = new ChannelControllerImpl(dir);
+
+    // Ensure the named channel exists and is shared
+    let targetChannel: import("./types").Channel | undefined;
+    try {
+      targetChannel = channelController.viewChannel(opts.channel);
+    } catch {
+      targetChannel = undefined;
+    }
+
+    if (targetChannel) {
+      if (!targetChannel.shared) {
+        console.log(`  Marking channel "${opts.channel}" as shared...`);
+        await channelController.editChannel(opts.channel, { shared: true });
+      } else {
+        console.log(`  Channel "${opts.channel}" is already shared`);
+      }
+    } else {
+      console.log(`Creating channel "${opts.channel}"...`);
+      targetChannel = await channelController.addChannel({
+        name: opts.channel,
+        fetchMethod: FetchMethod.RSS,
+        shared: true,
+      });
+      console.log(`  Created "${targetChannel.id}" (shared: true)`);
+    }
+
+    // Mark any other existing non-shared channels as shared too
+    for (const ch of channelController.listChannels()) {
+      if (ch.id !== opts.channel && !ch.shared) {
+        console.log(`  Also marking "${ch.id}" as shared`);
+        await channelController.editChannel(ch.id, { shared: true });
+      }
+    }
+
+    console.log(`Shared channels: ${channelController.listChannels().filter((c) => c.shared).map((c) => c.name).join(", ")}`);
+
+    const server = new SyncServer(dir);
+    console.log(`Starting res-sync server on ${opts.host ?? "127.0.0.1"}:${opts.port}`);
+    await server.start({ port: opts.port, host: opts.host ?? "127.0.0.1" });
+  });
+
+// ─── sync ───────────────────────────────────────────────────────────────────
+
+const syncCmd = program.command("sync").description("Manage sync subscriptions and daemon");
+
+syncCmd
+  .command("subscribe")
+  .description("Add a sync subscription")
+  .requiredOption("--server-url <url>", "server URL (e.g. http://127.0.0.1:9876)")
+  .requiredOption("--server-channel <id>", "channel ID on the server")
+  .requiredOption("--local-channel <id>", "local channel ID to sync into")
+  .action(
+    async (opts: { serverUrl: string; serverChannel: string; localChannel: string }) => {
+      const reservoir = loadReservoir(getGlobalDir());
+      const { addSubscription } = await import("./sync-config");
+      addSubscription(reservoir.directory, {
+        serverUrl: opts.serverUrl,
+        serverChannelId: opts.serverChannel,
+        localChannelId: opts.localChannel,
+      });
+      console.log("Subscription added");
+    },
+  );
+
+syncCmd
+  .command("start")
+  .description("Start the sync daemon in the background")
+  .action(async () => {
+    const reservoir = loadReservoir(getGlobalDir());
+    const { startSyncDaemon } = await import("./sync-client");
+    await startSyncDaemon(reservoir.directory);
+  });
+
+syncCmd
+  .command("stop")
+  .description("Stop the sync daemon")
+  .action(async () => {
+    const reservoir = loadReservoir(getGlobalDir());
+    const { stopSyncDaemon } = await import("./sync-client");
+    const result = stopSyncDaemon(reservoir.directory);
+    console.log(result.message);
+  });
+
+syncCmd
+  .command("status")
+  .description("Show sync daemon status")
+  .action(async () => {
+    const reservoir = loadReservoir(getGlobalDir());
+    const { getSyncDaemonStatus } = await import("./sync-client");
+    const status = getSyncDaemonStatus(reservoir.directory);
+    if (!status.running) {
+      console.log("Sync daemon is not running");
+      return;
+    }
+    console.log(`Sync daemon is running (pid ${status.pid})`);
   });
 
 // ─── clean ───────────────────────────────────────────────────────────────────
