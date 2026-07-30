@@ -29,6 +29,14 @@ export interface ChannelConfig {
   duplicateStrategy?: DuplicateStrategy;
   /** Lock names to apply automatically to newly fetched content */
   retainedLocks?: string[];
+  /** Whether this channel is shared via res serve */
+  shared?: boolean;
+  /**
+   * Custom content root relative to the reservoir directory.
+   * Defaults to the channel ID (i.e. `<reservoirDir>/<channelId>`).
+   * Set to `""` or `"."` to use the reservoir root itself.
+   */
+  contentRoot?: string;
 }
 
 export interface Channel extends Omit<ChannelConfig, "refreshInterval" | "retainedLocks"> {

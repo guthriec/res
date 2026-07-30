@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import { createHash } from "crypto";
 import { ContentItem, FetchedContent } from "./types";
 import { getBuiltinFetcher } from "./fetchers";
 import { createCustomFetcher } from "./fetchers/custom";
@@ -11,6 +12,8 @@ import { Logger } from "./logger";
 import { ChannelControllerImpl } from "./channel-controller";
 import { ContentLockState } from "./reservoir-internal-types";
 import { RelativePathHelper } from "./relative-path-helper";
+import type { VersionSidecar } from "./version-store";
+import { VersionStore } from "./version-store";
 
 interface ExistingContentEntry {
   filePath: string;
@@ -35,6 +38,7 @@ interface FetchOrchestratorDependencies {
 }
 
 export class FetchOrchestrator {
+  private readonly reservoirDir: string;
   private readonly customFetchersDirectory: string;
   private readonly idAllocator: ContentIdAllocator;
   private readonly channelController: ChannelControllerImpl;
@@ -42,6 +46,7 @@ export class FetchOrchestrator {
   private readonly relativePathHelper: RelativePathHelper;
 
   constructor(deps: FetchOrchestratorDependencies) {
+    this.reservoirDir = path.resolve(deps.reservoirDir);
     this.customFetchersDirectory = deps.customFetchersDirectory;
     this.idAllocator = deps.idAllocator;
     this.channelController = deps.channelController;
@@ -146,6 +151,17 @@ export class FetchOrchestrator {
 
       await this.idAllocator.setMapping(id, this.relativePathHelper.toRelativePath(contentPath));
       fs.writeFileSync(contentPath, item.content);
+
+      // Create initial sidecar for version tracking
+      const fileHash = createHash("sha256").update(item.content).digest("hex");
+      const now = new Date().toISOString();
+      const initialSidecar: VersionSidecar = {
+        contentId: id,
+        chain: [{ id: "v1", parentIds: [], hash: fileHash, timestamp: now }],
+      };
+      const store = new VersionStore(this.reservoirDir);
+      await store.write(contentPath, initialSidecar);
+
       existingByDedupeKey.set(dedupeKey, { filePath: contentPath, contentId: id });
 
       if (Array.isArray(item.supplementaryFiles) && item.supplementaryFiles.length > 0) {
