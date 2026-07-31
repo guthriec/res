@@ -502,9 +502,10 @@ program
   .option("--port <number>", "port to listen on (default 3030)", (v) => parseInt(v, 10), 3030)
   .option("--host <address>", "host to bind to (default 127.0.0.1)")
   .option("--channel <name>", "shared channel name to auto-create if missing", "shared-vault")
-  .action(async (opts: { port: number; host?: string; channel: string }) => {
+  .option("--secret <token>", "shared secret for Authorization: Bearer <token>")
+  .action(async (opts: { port: number; host?: string; channel: string; secret?: string }) => {
     const dir = getGlobalDir() ?? process.cwd();
-    const { mkdirSync, existsSync } = await import("fs");
+    const { mkdirSync } = await import("fs");
     const { join } = await import("path");
 
     // Ensure reservoir structure
@@ -548,8 +549,12 @@ program
     console.log(`Shared channels: ${channelController.listChannels().filter((c) => c.shared).map((c) => c.name).join(", ")}`);
 
     const server = new SyncServer(dir);
-    console.log(`Starting res-sync server on ${opts.host ?? "127.0.0.1"}:${opts.port}`);
-    await server.start({ port: opts.port, host: opts.host ?? "127.0.0.1" });
+    const effectiveHost = opts.host ?? "127.0.0.1";
+    if (opts.secret) {
+      console.log(`  Auth: Bearer token required`);
+    }
+    console.log(`Starting res-sync server on ${effectiveHost}:${opts.port}`);
+    await server.start({ port: opts.port, host: effectiveHost, secret: opts.secret });
   });
 
 // ─── sync ───────────────────────────────────────────────────────────────────
@@ -562,14 +567,16 @@ syncCmd
   .requiredOption("--server-url <url>", "server URL (e.g. http://127.0.0.1:9876)")
   .requiredOption("--server-channel <id>", "channel ID on the server")
   .requiredOption("--local-channel <id>", "local channel ID to sync into")
+  .option("--secret <token>", "shared secret for Authorization: Bearer <token>")
   .action(
-    async (opts: { serverUrl: string; serverChannel: string; localChannel: string }) => {
+    async (opts: { serverUrl: string; serverChannel: string; localChannel: string; secret?: string }) => {
       const reservoir = loadReservoir(getGlobalDir());
       const { addSubscription } = await import("./sync-config");
       addSubscription(reservoir.directory, {
         serverUrl: opts.serverUrl,
         serverChannelId: opts.serverChannel,
         localChannelId: opts.localChannel,
+        secret: opts.secret,
       });
       console.log("Subscription added");
     },
