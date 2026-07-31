@@ -377,7 +377,7 @@ export class SyncClient {
     const pubStart = Date.now();
     await this.publishFilesInDir(channelDir);
     const pubMs = Date.now() - pubStart;
-    this.logger.info(`[sync] tick: scanAll=${scanMs}ms, publish=${pubMs}ms`);
+    this.logger.debug(`[sync] tick: scanAll=${scanMs}ms, publish=${pubMs}ms`);
   }
 
   private async publishFilesInDir(dir: string): Promise<void> {
