@@ -505,11 +505,15 @@ program
   .option("--secret <token>", "shared secret for Authorization: Bearer <token>")
   .action(async (opts: { port: number; host?: string; channel: string; secret?: string }) => {
     const dir = getGlobalDir() ?? process.cwd();
-    const { mkdirSync } = await import("fs");
-    const { join } = await import("path");
+    const fs = await import("fs");
+    const path = await import("path");
 
-    // Ensure reservoir structure
-    mkdirSync(join(dir, ".res", "channels"), { recursive: true });
+    // Ensure the reservoir is initialized. `serve` only strictly needs
+    // `.res/channels`, but the rest of the CLI (e.g. `res channel add`)
+    // requires `.res-config.json` to exist, so create it on first run.
+    if (!fs.existsSync(path.join(dir, ".res-config.json"))) {
+      new ReservoirImpl(dir).initialize();
+    }
 
     const channelController = new ChannelControllerImpl(dir);
 
