@@ -10,7 +10,8 @@ RUN apk add --no-cache tini
 COPY --from=build /build/dist /app/dist
 COPY --from=build /build/node_modules /app/node_modules
 COPY --from=build /build/package.json /app/
-RUN ln -s /app/dist/cli.js /usr/local/bin/res
+RUN printf '#!/bin/sh\nexec node /app/dist/cli.js "$@"\n' > /usr/local/bin/res \
+  && chmod +x /usr/local/bin/res
 WORKDIR /data
 VOLUME ["/data"]
 EXPOSE 3030

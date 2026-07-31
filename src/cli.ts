@@ -186,7 +186,7 @@ const channelCmd = program.command("channel").description("Manage channels");
 channelCmd
   .command("add <name>")
   .description("Add a new channel")
-  .requiredOption("--type <type>", "type: rss | web_page | <registered-fetcher-name>")
+  .option("--type <type>", "type: rss | web_page | none | <registered-fetcher-name> (default none)")
   .option("--fetch-param <json>", "fetcher params JSON merge patch object")
   .option("--rate-limit <seconds>", "rate-limit interval in seconds")
   .option("--refresh-interval <seconds>", "background refresh interval in seconds")
@@ -532,7 +532,7 @@ program
       console.log(`Creating channel "${opts.channel}"...`);
       targetChannel = await channelController.addChannel({
         name: opts.channel,
-        fetchMethod: FetchMethod.RSS,
+        fetchMethod: FetchMethod.None,
         shared: true,
       });
       console.log(`  Created "${targetChannel.id}" (shared: true)`);
