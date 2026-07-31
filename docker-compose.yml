@@ -1,0 +1,35 @@
+services:
+  res:
+    build: .
+    container_name: res-sync
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3030:3030"
+    volumes:
+      # Mount your reservoir directory. Create one with `res init` if needed.
+      - ./reservoir:/data
+    environment:
+      # Optional: shared secret for Authorization: Bearer <token>
+      - RES_SECRET=${RES_SECRET:-}
+    command:
+      - serve
+      - --host
+      - 0.0.0.0
+      - --secret
+      - ${RES_SECRET}
+
+  # Cloudflare Tunnel sidecar — exposes res-sync without opening a firewall port.
+  # Requires a cloudflare tunnel token. Get one at https://dash.cloudflare.com/ > Zero Trust > Tunnels.
+  # Usage: docker compose up -d
+  # Usage with token: RES_TUNNEL_TOKEN=xxxxx docker compose up -d
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: res-tunnel
+    restart: unless-stopped
+    depends_on:
+      - res
+    command:
+      - tunnel
+      - run
+      - --token
+      - ${RES_TUNNEL_TOKEN:?Set RES_TUNNEL_TOKEN or comment out the tunnel service}

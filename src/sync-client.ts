@@ -25,6 +25,8 @@ export interface SyncClientSubscription {
   serverUrl: string;
   serverChannelId: string;
   localChannelId: string;
+  /** Optional shared secret sent as Authorization: Bearer <secret> header. */
+  secret?: string;
 }
 
 export class SyncClient {
@@ -104,6 +106,19 @@ export class SyncClient {
     await this.publishIfNeeded();
   }
 
+  // ─── HTTP helper ──────────────────────────────────────────────────────
+
+  private authHeaders(): Record<string, string> {
+    if (!this.subscription.secret) return {};
+    return { Authorization: `Bearer ${this.subscription.secret}` };
+  }
+
+  private async fetchWithAuth(url: string, options?: RequestInit): Promise<Response> {
+    const headers = { ...this.authHeaders(), ...(options?.headers as Record<string, string> ?? {}) };
+    return fetch(url, { ...options, headers });
+  }
+
+
   // ─── Initial pull ─────────────────────────────────────────────────────────
 
   private async initialPull(): Promise<void> {
@@ -113,7 +128,7 @@ export class SyncClient {
 
     this.logger.debug(`[sync] initial pull from ${url}`);
     try {
-      const response = await fetch(url);
+      const response = await this.fetchWithAuth(url);
       if (!response.ok) {
         this.logger.error(`[sync] initial pull failed: ${response.status} ${response.statusText}`);
         return;
@@ -143,7 +158,7 @@ export class SyncClient {
         const url = `${baseUrl}/api/v1/channels/${this.subscription.serverChannelId}/events`;
 
         this.logger.debug(`[sync] SSE connecting to ${url}`);
-        const response = await fetch(url);
+        const response = await this.fetchWithAuth(url);
         if (!response.ok) {
           throw new Error(`SSE connection failed: ${response.status}`);
         }
@@ -445,9 +460,11 @@ export class SyncClient {
 
     this.logger.debug(`[sync] publishing ${filename}`);
     try {
-      const response = await fetch(url, {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      Object.assign(headers, this.authHeaders());
+      const response = await this.fetchWithAuth(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify(publishReq),
       });
 

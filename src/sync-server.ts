@@ -21,6 +21,8 @@ const API_PREFIX = "/api/v1";
 export interface SyncServerConfig {
   port: number;
   host?: string;
+  /** Optional shared secret for Authorization: Bearer <secret> on all requests. */
+  secret?: string;
 }
 
 /**
@@ -68,6 +70,7 @@ export class SyncServer {
   private httpServer: http.Server | undefined;
   private readonly sseClients: Map<string, Set<http.ServerResponse>>;
   private cleanupWatcher: (() => void) | undefined;
+  private secret: string | undefined;
 
   constructor(reservoirDir: string) {
     this.reservoirDir = path.resolve(reservoirDir);
@@ -81,6 +84,7 @@ export class SyncServer {
 
   async start(config: SyncServerConfig): Promise<void> {
     const host = config.host ?? "127.0.0.1";
+    this.secret = config.secret;
 
     this.httpServer = http.createServer((req, res) => this.handleRequest(req, res));
 
@@ -129,7 +133,7 @@ export class SyncServer {
   private addCorsHeaders(res: http.ServerResponse): void {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
     res.setHeader("Access-Control-Max-Age", "86400");
   }
 
@@ -146,6 +150,13 @@ export class SyncServer {
       res.end();
       return;
     }
+
+    // Auth check
+    if (this.secret && !this.isAuthorized(req)) {
+      this.writeJson(res, 401, { error: "unauthorized" });
+      return;
+    }
+
 
     try {
       if (!pathname.startsWith(API_PREFIX)) {
@@ -477,6 +488,15 @@ export class SyncServer {
       return false;
     }
   }
+
+  private isAuthorized(req: http.IncomingMessage): boolean {
+    const auth = req.headers.authorization;
+    if (!auth) return false;
+    const parts = auth.split(" ");
+    if (parts.length !== 2 || parts[0] !== "Bearer") return false;
+    return parts[1] === this.secret;
+  }
+
 
   private getContentForHash(currentContent: string, hash: string | null): string {
     if (hash === null) return "";
