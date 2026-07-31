@@ -157,6 +157,7 @@ export class SyncServer {
       return;
     }
 
+
     try {
       if (!pathname.startsWith(API_PREFIX)) {
         this.writeJson(res, 404, { error: "not found" });
@@ -495,6 +496,7 @@ export class SyncServer {
     if (parts.length !== 2 || parts[0] !== "Bearer") return false;
     return parts[1] === this.secret;
   }
+
 
   private getContentForHash(currentContent: string, hash: string | null): string {
     if (hash === null) return "";

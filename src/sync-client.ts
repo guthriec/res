@@ -118,6 +118,7 @@ export class SyncClient {
     return fetch(url, { ...options, headers });
   }
 
+
   // ─── Initial pull ─────────────────────────────────────────────────────────
 
   private async initialPull(): Promise<void> {
