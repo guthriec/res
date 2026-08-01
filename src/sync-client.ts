@@ -15,6 +15,7 @@ import type {
   SyncContentResponse,
   SyncContentItem,
   ContentUpdatedEvent,
+  ContentDeletedEvent,
 } from "./sync-protocol";
 
 const PUBLISH_TICK_MS = 10_000;
@@ -27,6 +28,8 @@ export interface SyncClientSubscription {
   localChannelId: string;
   /** Optional shared secret sent as Authorization: Bearer <secret> header. */
   secret?: string;
+  /** When true, deletions propagate both ways (destructive — opt-in). */
+  syncDeletions?: boolean;
 }
 
 export class SyncClient {
@@ -140,6 +143,10 @@ export class SyncClient {
         this.logger.debug(`[sync] initial pull applying: ${item.filename}`);
         await this.applyServerContent(item);
       }
+      if (this.subscription.syncDeletions) {
+        const serverFilenames = new Set(data.items.map((i) => i.filename));
+        await this.reconcileDeletions(serverFilenames);
+      }
       this.logger.info(`[sync] initial pull done: ${data.items.length} items in ${Date.now() - pullStart}ms`);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -247,6 +254,19 @@ export class SyncClient {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         this.logger.error(`[sync] content-updated error: ${message}`);
+      }
+    } else if (event === "content-deleted") {
+      if (!this.subscription.syncDeletions) {
+        this.logger.debug(`[sync] ignoring content-deleted (syncDeletions disabled): ${data}`);
+        return;
+      }
+      try {
+        const eventData = JSON.parse(data) as ContentDeletedEvent;
+        this.logger.info(`[sync] SSE content-deleted: ${eventData.filename}`);
+        await this.deleteLocalFile(eventData.filename);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        this.logger.error(`[sync] content-deleted error: ${message}`);
       }
     } else {
       this.logger.debug(`[sync] SSE unknown event: ${event}`);
@@ -388,6 +408,10 @@ export class SyncClient {
       return;
     }
 
+    const channelDir = this.channelController.resolveChannelContentRoot(
+      this.subscription.localChannelId,
+    );
+
     for (const entry of entries) {
       if (this.stopRequested) return;
 
@@ -398,7 +422,14 @@ export class SyncClient {
         continue;
       }
 
-      if (!entry.name.endsWith(".md") || entry.name.endsWith(".res-version.json")) continue;
+      if (entry.name.endsWith(".res-version.json")) {
+        if (this.subscription.syncDeletions) {
+          await this.maybePublishDeletion(absPath, channelDir);
+        }
+        continue;
+      }
+
+      if (!entry.name.endsWith(".md")) continue;
 
       const sidecar = this.versionStore.read(absPath);
       if (!sidecar) continue;
@@ -414,14 +445,112 @@ export class SyncClient {
       if (!unpublisedEdit) continue;
 
       // Use relative path from channel root so subdirectory structure is preserved
-      const channelDir = this.channelController.resolveChannelContentRoot(
-        this.subscription.localChannelId,
-      );
       const relativePath = path.relative(channelDir, absPath);
 
       const content = fs.readFileSync(absPath, "utf-8");
       await this.publishContent(relativePath, content, sidecar);
     }
+  }
+
+  /**
+   * If a sidecar is a tombstone (file deleted locally) and we haven't yet
+   * published the deletion, send a delete to the server.
+   */
+  private async maybePublishDeletion(sidecarPath: string, channelDir: string): Promise<void> {
+    const mdPath = sidecarPath.replace(/\.res-version\.json$/, "");
+    if (fs.existsSync(mdPath)) return; // file still present; not a deletion
+    const sidecar = this.versionStore.read(mdPath);
+    if (!sidecar) return;
+    const tip = sidecar.chain[sidecar.chain.length - 1];
+    if (!tip || tip.hash !== null) return; // not a tombstone
+    if (sidecar.lastPublishedVersionId === tip.id) return; // already published as deleted
+    await this.publishDelete(path.relative(channelDir, mdPath), sidecar, mdPath);
+  }
+
+  private async publishDelete(
+    filename: string,
+    sidecar: VersionSidecar,
+    mdPath: string,
+  ): Promise<void> {
+    const baseUrl = this.subscription.serverUrl.replace(/\/+$/, "");
+    const url = `${baseUrl}/api/v1/channels/${this.subscription.serverChannelId}/publish`;
+    const publishReq: PublishRequest = {
+      filename,
+      content: "",
+      localVersionChain: sidecar.chain,
+      deleted: true,
+    };
+    this.logger.debug(`[sync] publishing deletion ${filename}`);
+    try {
+      const headers = { "Content-Type": "application/json", ...this.authHeaders() };
+      const response = await this.fetchWithAuth(url, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(publishReq),
+      });
+      if (!response.ok) {
+        this.logger.error(`[sync] publish delete failed: ${response.status} for ${filename}`);
+        return;
+      }
+      sidecar.lastPublishedVersionId = sidecar.chain[sidecar.chain.length - 1].id;
+      await this.versionStore.write(mdPath, sidecar);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error(`[sync] publish delete error: ${message}`);
+    }
+  }
+
+  private async deleteLocalFile(filename: string): Promise<void> {
+    const channelDir = this.channelController.resolveChannelContentRoot(
+      this.subscription.localChannelId,
+    );
+    const mdPath = path.join(channelDir, filename);
+    for (const p of [mdPath, `${mdPath}.res-version.json`]) {
+      if (fs.existsSync(p)) {
+        try {
+          fs.rmSync(p);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          this.logger.error(`[sync] failed to delete ${p}: ${message}`);
+        }
+      }
+    }
+  }
+
+  /**
+   * After an initial pull, remove local files that are not on the server.
+   * Only touches files that were previously synced (have a published version),
+   * so brand-new local-only files are never deleted.
+   */
+  private async reconcileDeletions(serverFilenames: Set<string>): Promise<void> {
+    const channelDir = this.channelController.resolveChannelContentRoot(
+      this.subscription.localChannelId,
+    );
+    if (!fs.existsSync(channelDir)) return;
+
+    const walk = (dir: string): void => {
+      let entries: fs.Dirent[];
+      try {
+        entries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        return;
+      }
+      for (const e of entries) {
+        const abs = path.join(dir, e.name);
+        const rel = path.relative(channelDir, abs);
+        if (e.isDirectory()) {
+          walk(abs);
+          continue;
+        }
+        if (!e.name.endsWith(".md") || e.name.endsWith(".res-version.json")) continue;
+        const sidecar = this.versionStore.read(abs);
+        if (sidecar && sidecar.lastPublishedVersionId && !serverFilenames.has(rel)) {
+          this.logger.info(`[sync] deleting local file absent from server: ${rel}`);
+          this.deleteLocalFile(rel);
+        }
+      }
+    };
+    walk(channelDir);
   }
 
   private findUnpublisedLinearEdit(

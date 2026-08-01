@@ -331,6 +331,25 @@ export class SyncServer {
     fs.mkdirSync(path.dirname(mdPath), { recursive: true });
     const mdExists = fs.existsSync(mdPath);
 
+    // Deletion propagation: a client can publish a delete, which removes the
+    // file from the server and broadcasts a content-deleted event.
+    if (publishReq.deleted) {
+      for (const p of [mdPath, `${mdPath}.res-version.json`]) {
+        if (fs.existsSync(p)) fs.rmSync(p);
+      }
+      this.pushSseEvent(channelId, {
+        type: "content-deleted",
+        data: { channelId, filename: publishReq.filename },
+      });
+      this.writeJson(res, 200, {
+        filename: publishReq.filename,
+        merged: true,
+        content: "",
+        serverVersionChain: [],
+      });
+      return;
+    }
+
     let serverContent: string;
     let serverChain: ContentVersion[];
 
