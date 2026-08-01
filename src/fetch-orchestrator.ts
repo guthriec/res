@@ -60,6 +60,10 @@ export class FetchOrchestrator {
     const channel = this.channelController.viewChannel(channelId);
     const fetchParams = channel.fetchParams;
     const fetcher = this.resolveFetcher(channel.fetchMethod);
+    if (!fetcher) {
+      logger.debug(`[orchestrator] no fetcher for channel ${channelId} (${channel.fetchMethod}); skipping`);
+      return [];
+    }
 
     // Lazy resolver: delegates content lookup to the channel controller
     const resolveExistingContent = (url: string) => {
@@ -268,12 +272,17 @@ export class FetchOrchestrator {
     );
   }
 
-  private resolveFetcher(fetchMethod: string): Fetcher {
+  private resolveFetcher(fetchMethod: string): Fetcher | undefined {
     const builtinFetcher = getBuiltinFetcher(fetchMethod);
     if (builtinFetcher) {
       return builtinFetcher;
     }
 
-    return createCustomFetcher(path.join(this.customFetchersDirectory, fetchMethod));
+    const customPath = path.join(this.customFetchersDirectory, fetchMethod);
+    if (fs.existsSync(customPath)) {
+      return createCustomFetcher(customPath);
+    }
+
+    return undefined;
   }
 }

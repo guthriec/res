@@ -2,7 +2,7 @@ import { mergeFetchParamObject, normalizeFetchParamObject } from './fetch-params
 import { ChannelConfig, DuplicateStrategy, FetchMethod } from './types';
 
 export interface ChannelAddCliOptions {
-  type: string;
+  type?: string;
   fetchParam?: string;
   rateLimit?: string;
   refreshInterval?: string;
@@ -31,7 +31,7 @@ export function parseDuplicateStrategy(value: string | undefined): DuplicateStra
 export function buildChannelAddConfig(name: string, opts: ChannelAddCliOptions): ChannelConfig {
   return {
     name,
-    fetchMethod: opts.type as FetchMethod,
+    fetchMethod: (opts.type as FetchMethod) ?? FetchMethod.None,
     fetchParams: normalizeFetchParamObject(opts.fetchParam),
     rateLimitInterval: opts.rateLimit !== undefined ? parseInt(opts.rateLimit, 10) : undefined,
     refreshInterval: opts.refreshInterval !== undefined ? parseInt(opts.refreshInterval, 10) : undefined,

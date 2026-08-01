@@ -7,6 +7,8 @@ export interface SyncSubscription {
   serverUrl: string;
   serverChannelId: string;
   localChannelId: string;
+  /** Optional shared secret sent as Authorization: Bearer <secret> header. */
+  secret?: string;
 }
 
 export interface SyncConfig {
