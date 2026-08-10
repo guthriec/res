@@ -1,6 +1,8 @@
 export enum FetchMethod {
   RSS = "rss",
   WebPage = "web_page",
+  /** No fetcher — used for sync-only channels that are populated remotely. */
+  None = "none",
 }
 
 export const DEFAULT_REFRESH_INTERVAL_SECONDS = 24 * 60 * 60;

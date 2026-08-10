@@ -3,7 +3,7 @@ import { Fetcher } from './types';
 import { rssFetcher } from './rss';
 import { webPageFetcher } from './webpage';
 
-const BUILTIN_FETCHERS: Record<FetchMethod, Fetcher> = {
+const BUILTIN_FETCHERS: Partial<Record<FetchMethod, Fetcher>> = {
   [FetchMethod.RSS]: rssFetcher,
   [FetchMethod.WebPage]: webPageFetcher,
 };

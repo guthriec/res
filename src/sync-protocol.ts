@@ -6,6 +6,8 @@ export interface PublishRequest {
   filename: string;
   content: string;
   localVersionChain: ContentVersion[];
+  /** When true, the file was deleted locally and should be removed on the server. */
+  deleted?: boolean;
 }
 
 export interface PublishResponse {

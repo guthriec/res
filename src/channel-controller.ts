@@ -22,7 +22,7 @@ const CHANNELS_DIR = "channels";
 const CHANNEL_CONFIG_FILE = "channel.json";
 const CHANNEL_METADATA_FILE = "metadata.json";
 
-function channelDirectorySlug(name: string): string {
+export function channelDirectorySlug(name: string): string {
   const slug = name
     .trim()
     .toLowerCase()

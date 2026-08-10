@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.git/
+docs/
+tests/
+*.test.ts
+.gitignore
+AGENTS.md
+LICENSE
+README.md
+.vscode/
+docker-compose.yml
