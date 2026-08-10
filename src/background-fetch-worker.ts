@@ -67,6 +67,8 @@ export interface BackgroundFetchWorkerRuntimeOptions {
   logger?: (message: string) => void;
   errorLogger?: (message: string) => void;
   logLevel?: LogLevel;
+  onFetchSuccess?: (channelId: string, itemCount: number | null) => void;
+  onFetchError?: (channelId: string, message: string) => void;
 }
 
 /**
@@ -429,15 +431,21 @@ async function loopAndFetchWhileNotStopped(
   state: BackgroundFetchWorkerState,
   emit: WorkerEmit,
   isStopping: () => boolean,
+  hooks: {
+    onFetchSuccess?: (channelId: string, itemCount: number | null) => void;
+    onFetchError?: (channelId: string, message: string) => void;
+  } = {},
 ): Promise<void> {
   while (!isStopping()) {
     await runBackgroundFetchWorkerStep(absDir, reservoir, state, Date.now(), {
       onFetchSuccess: (channelId, itemCount) => {
         const suffix = itemCount === null ? "" : ` (${itemCount} item(s))`;
         emit("info", `[${channelId}] fetched${suffix}`);
+        hooks.onFetchSuccess?.(channelId, itemCount);
       },
       onFetchError: (channelId, message) => {
         emit("error", `[${channelId}] fetch failed: ${message}`);
+        hooks.onFetchError?.(channelId, message);
       },
     });
     if (isStopping()) {
@@ -529,8 +537,9 @@ async function setupWorkerLoop(
  */
 export async function runBackgroundFetchWorkerLoop(
   reservoirDir: string,
-  options: BackgroundFetchWorkerRuntimeOptions = {},
+  options: StartBackgroundFetchWorkerOptions = {},
 ): Promise<void> {
+  const { onFetchSuccess, onFetchError } = options;
   const loop = await setupWorkerLoop(reservoirDir, options);
 
   try {
@@ -541,6 +550,7 @@ export async function runBackgroundFetchWorkerLoop(
       loop.state,
       loop.emit,
       loop.isStopping,
+      { onFetchSuccess, onFetchError },
     );
   } finally {
     loop.requestStop();
