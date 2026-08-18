@@ -409,6 +409,26 @@ describe("runScheduledFetchStep", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
+  it("notifies the caller-supplied hook after each successful fetch", async () => {
+    const onFetchSuccess = vi.fn();
+    const reservoir = {
+      listChannels: () => [mkChannel({ id: "notified", refreshInterval: 1 })],
+      fetchChannel: vi.fn().mockResolvedValue([{ id: "x" }]),
+    };
+
+    const state: BackgroundFetchWorkerState = {
+      startedAt: new Date().toISOString(),
+      lastFetchAtByChannel: {},
+      lastAttemptAtByChannel: {},
+      lastErrorByChannel: {},
+    };
+
+    await runBackgroundFetchWorkerStep(tmpDir, reservoir, state, Date.now(), { onFetchSuccess });
+
+    expect(onFetchSuccess).toHaveBeenCalledTimes(1);
+    expect(onFetchSuccess).toHaveBeenCalledWith("notified", 1);
+  });
+
   it("second start cycle avoids duplicate fetch within refresh interval", async () => {
     // GIVEN
     const realReservoir = new Reservoir(tmpDir).initialize();
