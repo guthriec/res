@@ -439,13 +439,13 @@ async function loopAndFetchWhileNotStopped(
   while (!isStopping()) {
     await runBackgroundFetchWorkerStep(absDir, reservoir, state, Date.now(), {
       onFetchSuccess: (channelId, itemCount) => {
+        hooks.onFetchSuccess?.(channelId, itemCount);
         const suffix = itemCount === null ? "" : ` (${itemCount} item(s))`;
         emit("info", `[${channelId}] fetched${suffix}`);
-        hooks.onFetchSuccess?.(channelId, itemCount);
       },
       onFetchError: (channelId, message) => {
-        emit("error", `[${channelId}] fetch failed: ${message}`);
         hooks.onFetchError?.(channelId, message);
+        emit("error", `[${channelId}] fetch failed: ${message}`);
       },
     });
     if (isStopping()) {
@@ -466,6 +466,10 @@ interface WorkerLoop {
   reservoir: ReservoirImpl;
   state: BackgroundFetchWorkerState;
   emit: WorkerEmit;
+  hooks: {
+    onFetchSuccess?: (channelId: string, itemCount: number | null) => void;
+    onFetchError?: (channelId: string, message: string) => void;
+  };
   isStopping: () => boolean;
   requestStop: () => void;
   teardown: () => void;
@@ -485,6 +489,10 @@ async function setupWorkerLoop(
   const stepIntervalMs = normalizeWorkerStepIntervalMs(options.tickIntervalMs);
   const { activeLogLevel, emit } = createWorkerEmitter(options);
   process.env.RES_LOG_LEVEL = activeLogLevel;
+  const hooks = {
+    onFetchSuccess: options.onFetchSuccess,
+    onFetchError: options.onFetchError,
+  };
 
   const { reservoir, state } = await loadReservoirAndState(absDir);
   const stopWatchingResync = watchChannelsForResync(absDir, reservoir, emit);
@@ -515,6 +523,7 @@ async function setupWorkerLoop(
     reservoir,
     state,
     emit,
+    hooks,
     isStopping: () => stopping,
     requestStop,
     teardown,
@@ -537,9 +546,8 @@ async function setupWorkerLoop(
  */
 export async function runBackgroundFetchWorkerLoop(
   reservoirDir: string,
-  options: StartBackgroundFetchWorkerOptions = {},
+  options: BackgroundFetchWorkerRuntimeOptions = {},
 ): Promise<void> {
-  const { onFetchSuccess, onFetchError } = options;
   const loop = await setupWorkerLoop(reservoirDir, options);
 
   try {
@@ -550,7 +558,7 @@ export async function runBackgroundFetchWorkerLoop(
       loop.state,
       loop.emit,
       loop.isStopping,
-      { onFetchSuccess, onFetchError },
+      loop.hooks,
     );
   } finally {
     loop.requestStop();
