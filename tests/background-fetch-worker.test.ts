@@ -14,6 +14,7 @@ import { ReservoirImpl as Reservoir } from "../src/reservoir";
 import { Channel, DEFAULT_REFRESH_INTERVAL_SECONDS, FetchMethod } from "../src/types";
 import {
   countRunsFromMarker,
+  createFailingCustomFetcherExecutable,
   createFixtureCustomFetcherExecutable,
   createMarkerCustomFetcherExecutable,
   waitForWorkerStartAndFetchOpportunity,
@@ -73,6 +74,12 @@ async function stopWorkerAndAwait(startPromise: Promise<void>): Promise<void> {
   const result = stopBackgroundFetchWorker(tmpDir);
   expect(result.stopped).toBe(true);
   await startPromise;
+}
+
+async function waitForHookCalls(calls: () => number): Promise<void> {
+  for (let i = 0; i < 100 && calls() === 0; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 describe("runScheduledFetchStep", () => {
@@ -402,6 +409,26 @@ describe("runScheduledFetchStep", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
+  it("notifies the caller-supplied hook after each successful fetch", async () => {
+    const onFetchSuccess = vi.fn();
+    const reservoir = {
+      listChannels: () => [mkChannel({ id: "notified", refreshInterval: 1 })],
+      fetchChannel: vi.fn().mockResolvedValue([{ id: "x" }]),
+    };
+
+    const state: BackgroundFetchWorkerState = {
+      startedAt: new Date().toISOString(),
+      lastFetchAtByChannel: {},
+      lastAttemptAtByChannel: {},
+      lastErrorByChannel: {},
+    };
+
+    await runBackgroundFetchWorkerStep(tmpDir, reservoir, state, Date.now(), { onFetchSuccess });
+
+    expect(onFetchSuccess).toHaveBeenCalledTimes(1);
+    expect(onFetchSuccess).toHaveBeenCalledWith("notified", 1);
+  });
+
   it("second start cycle avoids duplicate fetch within refresh interval", async () => {
     // GIVEN
     const realReservoir = new Reservoir(tmpDir).initialize();
@@ -594,6 +621,68 @@ describe("startBackgroundFetchWorker / stopBackgroundFetchWorker / getBackground
 
     await startPromise;
     expect(fs.existsSync(pidFile)).toBe(false);
+  });
+
+  it("invokes onFetchSuccess hook for each channel fetch", async () => {
+    const reservoir = new Reservoir(tmpDir).initialize();
+    const executablePath = createFixtureCustomFetcherExecutable(tmpDir);
+    const registered = reservoir.addFetcher(executablePath);
+    const channel = await reservoir.channelController.addChannel({
+      name: "Hook Success Channel",
+      fetchMethod: registered.name,
+      refreshInterval: 1,
+    });
+
+    const onFetchSuccess = vi.fn();
+    const startPromise = startBackgroundFetchWorker(tmpDir, {
+      tickIntervalMs: WORKER_TEST_TICK_INTERVAL_MS,
+      logLevel: "silent",
+      logger: () => undefined,
+      errorLogger: () => undefined,
+      onFetchSuccess,
+    });
+
+    try {
+      await waitForWorkerOpportunity();
+      await waitForHookCalls(() => onFetchSuccess.mock.calls.length);
+      expect(onFetchSuccess).toHaveBeenCalledWith(channel.id, 1);
+    } finally {
+      const result = stopBackgroundFetchWorker(tmpDir);
+      if (result.stopped) {
+        await startPromise;
+      }
+    }
+  });
+
+  it("invokes onFetchError hook when a channel fetch fails", async () => {
+    const reservoir = new Reservoir(tmpDir).initialize();
+    const executablePath = createFailingCustomFetcherExecutable(tmpDir);
+    const registered = reservoir.addFetcher(executablePath);
+    const channel = await reservoir.channelController.addChannel({
+      name: "Hook Error Channel",
+      fetchMethod: registered.name,
+      refreshInterval: 1,
+    });
+
+    const onFetchError = vi.fn();
+    const startPromise = startBackgroundFetchWorker(tmpDir, {
+      tickIntervalMs: WORKER_TEST_TICK_INTERVAL_MS,
+      logLevel: "silent",
+      logger: () => undefined,
+      errorLogger: () => undefined,
+      onFetchError,
+    });
+
+    try {
+      await waitForWorkerOpportunity();
+      await waitForHookCalls(() => onFetchError.mock.calls.length);
+      expect(onFetchError).toHaveBeenCalledWith(channel.id, expect.any(String));
+    } finally {
+      const result = stopBackgroundFetchWorker(tmpDir);
+      if (result.stopped) {
+        await startPromise;
+      }
+    }
   });
 
   it("start throws when an existing fetcher pid is running", async () => {

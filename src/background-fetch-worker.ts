@@ -67,6 +67,8 @@ export interface BackgroundFetchWorkerRuntimeOptions {
   logger?: (message: string) => void;
   errorLogger?: (message: string) => void;
   logLevel?: LogLevel;
+  onFetchSuccess?: (channelId: string, itemCount: number | null) => void;
+  onFetchError?: (channelId: string, message: string) => void;
 }
 
 /**
@@ -429,14 +431,20 @@ async function loopAndFetchWhileNotStopped(
   state: BackgroundFetchWorkerState,
   emit: WorkerEmit,
   isStopping: () => boolean,
+  hooks: {
+    onFetchSuccess?: (channelId: string, itemCount: number | null) => void;
+    onFetchError?: (channelId: string, message: string) => void;
+  } = {},
 ): Promise<void> {
   while (!isStopping()) {
     await runBackgroundFetchWorkerStep(absDir, reservoir, state, Date.now(), {
       onFetchSuccess: (channelId, itemCount) => {
+        hooks.onFetchSuccess?.(channelId, itemCount);
         const suffix = itemCount === null ? "" : ` (${itemCount} item(s))`;
         emit("info", `[${channelId}] fetched${suffix}`);
       },
       onFetchError: (channelId, message) => {
+        hooks.onFetchError?.(channelId, message);
         emit("error", `[${channelId}] fetch failed: ${message}`);
       },
     });
@@ -458,6 +466,10 @@ interface WorkerLoop {
   reservoir: ReservoirImpl;
   state: BackgroundFetchWorkerState;
   emit: WorkerEmit;
+  hooks: {
+    onFetchSuccess?: (channelId: string, itemCount: number | null) => void;
+    onFetchError?: (channelId: string, message: string) => void;
+  };
   isStopping: () => boolean;
   requestStop: () => void;
   teardown: () => void;
@@ -477,6 +489,10 @@ async function setupWorkerLoop(
   const stepIntervalMs = normalizeWorkerStepIntervalMs(options.tickIntervalMs);
   const { activeLogLevel, emit } = createWorkerEmitter(options);
   process.env.RES_LOG_LEVEL = activeLogLevel;
+  const hooks = {
+    onFetchSuccess: options.onFetchSuccess,
+    onFetchError: options.onFetchError,
+  };
 
   const { reservoir, state } = await loadReservoirAndState(absDir);
   const stopWatchingResync = watchChannelsForResync(absDir, reservoir, emit);
@@ -507,6 +523,7 @@ async function setupWorkerLoop(
     reservoir,
     state,
     emit,
+    hooks,
     isStopping: () => stopping,
     requestStop,
     teardown,
@@ -541,6 +558,7 @@ export async function runBackgroundFetchWorkerLoop(
       loop.state,
       loop.emit,
       loop.isStopping,
+      loop.hooks,
     );
   } finally {
     loop.requestStop();

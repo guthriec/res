@@ -77,6 +77,23 @@ export function createMarkerCustomFetcherExecutable(tmpDir: string, runMarkerPat
   return executablePath;
 }
 
+export function createFailingCustomFetcherExecutable(tmpDir: string): string {
+  const fetcherBaseName = `failing-fetcher-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const executablePath = path.join(
+    tmpDir,
+    process.platform === "win32" ? `${fetcherBaseName}.cmd` : `${fetcherBaseName}.sh`,
+  );
+
+  if (process.platform === "win32") {
+    fs.writeFileSync(executablePath, ["@exit /b 1"].join("\r\n"), "utf-8");
+  } else {
+    fs.writeFileSync(executablePath, ["#!/bin/sh", "exit 1"].join("\n"), "utf-8");
+    fs.chmodSync(executablePath, 0o755);
+  }
+
+  return executablePath;
+}
+
 export async function waitForWorkerStartAndFetchOpportunity(
   reservoirDir: string,
   options: {
