@@ -732,3 +732,68 @@ describe("startBackgroundFetchWorker / stopBackgroundFetchWorker / getBackground
     expect(result.message).toContain("not running");
   });
 });
+
+describe("corrupt/truncated status file resilience", () => {
+  const statusPath = (): string => path.join(tmpDir, ".res-fetcher-status.json");
+
+  it("readBackgroundFetchWorkerStatusFile returns null for an empty status file", () => {
+    fs.writeFileSync(statusPath(), "", "utf-8");
+
+    expect(() => readBackgroundFetchWorkerStatusFile(tmpDir)).not.toThrow();
+    expect(readBackgroundFetchWorkerStatusFile(tmpDir)).toBeNull();
+  });
+
+  it("readBackgroundFetchWorkerStatusFile returns null for malformed JSON", () => {
+    fs.writeFileSync(statusPath(), '{ "this is not valid json', "utf-8");
+
+    expect(() => readBackgroundFetchWorkerStatusFile(tmpDir)).not.toThrow();
+    expect(readBackgroundFetchWorkerStatusFile(tmpDir)).toBeNull();
+  });
+
+  it("readBackgroundFetchWorkerStatusFile still parses valid JSON", () => {
+    const valid = {
+      pid: 1234,
+      startedAt: "2026-01-01T00:00:00.000Z",
+      lastHeartbeatAt: "2026-01-01T00:00:01.000Z",
+      lastFetchAtByChannel: { a: "2026-01-01T00:00:00.500Z" },
+      lastErrorByChannel: {},
+    };
+    fs.writeFileSync(statusPath(), JSON.stringify(valid, null, 2), "utf-8");
+
+    expect(readBackgroundFetchWorkerStatusFile(tmpDir)).toEqual(valid);
+  });
+
+  it("startBackgroundFetchWorker starts successfully with a corrupt status file present", async () => {
+    new Reservoir(tmpDir).initialize();
+    fs.writeFileSync(statusPath(), '{ "this is not valid json', "utf-8");
+
+    const startPromise = startWorkerForTest();
+    try {
+      await waitForWorkerOpportunity();
+      expect(fs.existsSync(path.join(tmpDir, ".res-fetcher.pid"))).toBe(true);
+    } finally {
+      const result = stopBackgroundFetchWorker(tmpDir);
+      if (result.stopped) {
+        await startPromise;
+      }
+    }
+  });
+
+  it("persists a valid status file after runBackgroundFetchWorkerStep", async () => {
+    const reservoir = new Reservoir(tmpDir).initialize();
+    const t0 = new Date("2026-01-01T00:00:00.000Z").getTime();
+    const state: BackgroundFetchWorkerState = {
+      startedAt: new Date(t0).toISOString(),
+      lastFetchAtByChannel: {},
+      lastAttemptAtByChannel: {},
+      lastErrorByChannel: {},
+    };
+
+    await runBackgroundFetchWorkerStep(tmpDir, reservoir, state, t0);
+
+    const persisted = readBackgroundFetchWorkerStatusFile(tmpDir);
+    expect(persisted).not.toBeNull();
+    expect(persisted?.pid).toBe(process.pid);
+    expect(persisted?.startedAt).toBe(state.startedAt);
+  });
+});
