@@ -716,6 +716,43 @@ describe("startBackgroundFetchWorker / stopBackgroundFetchWorker / getBackground
     expect(status.lastFetchAtByChannel?.a).toBe("2026-01-01T00:00:00.500Z");
   });
 
+  it("recovers from an empty status file by treating it as no saved status", () => {
+    fs.writeFileSync(path.join(tmpDir, ".res-fetcher-status.json"), "", "utf-8");
+    expect(readBackgroundFetchWorkerStatusFile(tmpDir)).toBeNull();
+  });
+
+  it("recovers from a corrupt (non-JSON) status file by treating it as no saved status", () => {
+    fs.writeFileSync(
+      path.join(tmpDir, ".res-fetcher-status.json"),
+      "this is definitely not json{",
+      "utf-8",
+    );
+    expect(readBackgroundFetchWorkerStatusFile(tmpDir)).toBeNull();
+  });
+
+  it("starts cleanly even when the status file is corrupted", async () => {
+    new Reservoir(tmpDir).initialize();
+    // Corrupt status file (the scenario from a killed mid-write).
+    fs.writeFileSync(path.join(tmpDir, ".res-fetcher-status.json"), "", "utf-8");
+
+    const startPromise = startBackgroundFetchWorker(tmpDir, WORKER_TEST_OPTIONS);
+
+    // Wait for the worker to come up and rewrite its status file (non-empty).
+    const statusFile = path.join(tmpDir, ".res-fetcher-status.json");
+    for (
+      let i = 0;
+      i < 100 && !(fs.existsSync(statusFile) && fs.statSync(statusFile).size > 0);
+      i += 1
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(fs.statSync(statusFile).size).toBeGreaterThan(0);
+
+    const result = stopBackgroundFetchWorker(tmpDir);
+    expect(result.stopped).toBe(true);
+    await startPromise;
+  });
+
   it("stop clears pid file when a running pid is present", () => {
     fs.writeFileSync(path.join(tmpDir, ".res-fetcher.pid"), `${process.pid}\n`, "utf-8");
 

@@ -121,18 +121,34 @@ export function readBackgroundFetchWorkerStatusFile(
 ): BackgroundFetchWorkerStatus | null {
   const statusPath = getBackgroundFetchWorkerStatusPath(reservoirDir);
   if (!fs.existsSync(statusPath)) return null;
-  return JSON.parse(fs.readFileSync(statusPath, "utf-8")) as BackgroundFetchWorkerStatus;
+
+  let raw: string;
+  try {
+    raw = fs.readFileSync(statusPath, "utf-8");
+  } catch {
+    return null;
+  }
+  if (!raw.trim()) return null; // empty file (e.g. killed mid-write)
+
+  try {
+    return JSON.parse(raw) as BackgroundFetchWorkerStatus;
+  } catch {
+    // Corrupt/partial status file. Treat it as "no saved status" so the worker
+    // starts fresh instead of crashing on startup.
+    return null;
+  }
 }
 
 function writeBackgroundFetchWorkerStatusFile(
   reservoirDir: string,
   status: BackgroundFetchWorkerStatus,
 ): void {
-  fs.writeFileSync(
-    getBackgroundFetchWorkerStatusPath(reservoirDir),
-    JSON.stringify(status, null, 2),
-    "utf-8",
-  );
+  const statusPath = getBackgroundFetchWorkerStatusPath(reservoirDir);
+  // Write to a temp file then rename so a kill mid-write can never leave a
+  // truncated status file behind.
+  const tmpPath = `${statusPath}.tmp`;
+  fs.writeFileSync(tmpPath, JSON.stringify(status, null, 2), "utf-8");
+  fs.renameSync(tmpPath, statusPath);
 }
 
 export function getBackgroundFetchWorkerStatus(
