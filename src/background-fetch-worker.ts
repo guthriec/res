@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import { writeJSONAtomicSync } from "./atomic-writes";
 import { createDirectoryWatcher } from "./file-watcher";
 import { Channel, DEFAULT_REFRESH_INTERVAL_SECONDS } from "./types";
 import { ReservoirImpl } from "./reservoir";
@@ -121,18 +122,20 @@ export function readBackgroundFetchWorkerStatusFile(
 ): BackgroundFetchWorkerStatus | null {
   const statusPath = getBackgroundFetchWorkerStatusPath(reservoirDir);
   if (!fs.existsSync(statusPath)) return null;
-  return JSON.parse(fs.readFileSync(statusPath, "utf-8")) as BackgroundFetchWorkerStatus;
+  try {
+    return JSON.parse(fs.readFileSync(statusPath, "utf-8")) as BackgroundFetchWorkerStatus;
+  } catch {
+    // A killed process can leave an empty/truncated status file behind. Treat it
+    // as "no status" so startup survives instead of crashing on invalid JSON.
+    return null;
+  }
 }
 
 function writeBackgroundFetchWorkerStatusFile(
   reservoirDir: string,
   status: BackgroundFetchWorkerStatus,
 ): void {
-  fs.writeFileSync(
-    getBackgroundFetchWorkerStatusPath(reservoirDir),
-    JSON.stringify(status, null, 2),
-    "utf-8",
-  );
+  writeJSONAtomicSync(getBackgroundFetchWorkerStatusPath(reservoirDir), status);
 }
 
 export function getBackgroundFetchWorkerStatus(
