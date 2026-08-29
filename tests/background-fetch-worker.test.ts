@@ -14,6 +14,7 @@ import { ReservoirImpl as Reservoir } from "../src/reservoir";
 import { Channel, DEFAULT_REFRESH_INTERVAL_SECONDS, FetchMethod } from "../src/types";
 import {
   countRunsFromMarker,
+  createFailingCustomFetcherExecutable,
   createFixtureCustomFetcherExecutable,
   createMarkerCustomFetcherExecutable,
   waitForWorkerStartAndFetchOpportunity,
@@ -73,6 +74,12 @@ async function stopWorkerAndAwait(startPromise: Promise<void>): Promise<void> {
   const result = stopBackgroundFetchWorker(tmpDir);
   expect(result.stopped).toBe(true);
   await startPromise;
+}
+
+async function waitForHookCalls(calls: () => number): Promise<void> {
+  for (let i = 0; i < 100 && calls() === 0; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }
 
 describe("runScheduledFetchStep", () => {
@@ -427,6 +434,26 @@ describe("runScheduledFetchStep", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
+  it("notifies the caller-supplied hook after each successful fetch", async () => {
+    const onFetchSuccess = vi.fn();
+    const reservoir = {
+      listChannels: () => [mkChannel({ id: "notified", refreshInterval: 1 })],
+      fetchChannel: vi.fn().mockResolvedValue([{ id: "x" }]),
+    };
+
+    const state: BackgroundFetchWorkerState = {
+      startedAt: new Date().toISOString(),
+      lastFetchAtByChannel: {},
+      lastAttemptAtByChannel: {},
+      lastErrorByChannel: {},
+    };
+
+    await runBackgroundFetchWorkerStep(tmpDir, reservoir, state, Date.now(), { onFetchSuccess });
+
+    expect(onFetchSuccess).toHaveBeenCalledTimes(1);
+    expect(onFetchSuccess).toHaveBeenCalledWith("notified", ["x"]);
+  });
+
   it("second start cycle avoids duplicate fetch within refresh interval", async () => {
     // GIVEN
     const realReservoir = new Reservoir(tmpDir).initialize();
@@ -621,6 +648,68 @@ describe("startBackgroundFetchWorker / stopBackgroundFetchWorker / getBackground
     expect(fs.existsSync(pidFile)).toBe(false);
   });
 
+  it("invokes onFetchSuccess hook for each channel fetch", async () => {
+    const reservoir = new Reservoir(tmpDir).initialize();
+    const executablePath = createFixtureCustomFetcherExecutable(tmpDir);
+    const registered = reservoir.addFetcher(executablePath);
+    const channel = await reservoir.channelController.addChannel({
+      name: "Hook Success Channel",
+      fetchMethod: registered.name,
+      refreshInterval: 1,
+    });
+
+    const onFetchSuccess = vi.fn();
+    const startPromise = startBackgroundFetchWorker(tmpDir, {
+      tickIntervalMs: WORKER_TEST_TICK_INTERVAL_MS,
+      logLevel: "silent",
+      logger: () => undefined,
+      errorLogger: () => undefined,
+      onFetchSuccess,
+    });
+
+    try {
+      await waitForWorkerOpportunity();
+      await waitForHookCalls(() => onFetchSuccess.mock.calls.length);
+      expect(onFetchSuccess).toHaveBeenCalledWith(channel.id, [expect.any(String)]);
+    } finally {
+      const result = stopBackgroundFetchWorker(tmpDir);
+      if (result.stopped) {
+        await startPromise;
+      }
+    }
+  });
+
+  it("invokes onFetchError hook when a channel fetch fails", async () => {
+    const reservoir = new Reservoir(tmpDir).initialize();
+    const executablePath = createFailingCustomFetcherExecutable(tmpDir);
+    const registered = reservoir.addFetcher(executablePath);
+    const channel = await reservoir.channelController.addChannel({
+      name: "Hook Error Channel",
+      fetchMethod: registered.name,
+      refreshInterval: 1,
+    });
+
+    const onFetchError = vi.fn();
+    const startPromise = startBackgroundFetchWorker(tmpDir, {
+      tickIntervalMs: WORKER_TEST_TICK_INTERVAL_MS,
+      logLevel: "silent",
+      logger: () => undefined,
+      errorLogger: () => undefined,
+      onFetchError,
+    });
+
+    try {
+      await waitForWorkerOpportunity();
+      await waitForHookCalls(() => onFetchError.mock.calls.length);
+      expect(onFetchError).toHaveBeenCalledWith(channel.id, expect.any(String));
+    } finally {
+      const result = stopBackgroundFetchWorker(tmpDir);
+      if (result.stopped) {
+        await startPromise;
+      }
+    }
+  });
+
   it("start throws when an existing fetcher pid is running", async () => {
     fs.writeFileSync(path.join(tmpDir, ".res-fetcher.pid"), `${process.pid}\n`, "utf-8");
 
@@ -666,5 +755,70 @@ describe("startBackgroundFetchWorker / stopBackgroundFetchWorker / getBackground
     const result = stopBackgroundFetchWorker(tmpDir);
     expect(result.stopped).toBe(false);
     expect(result.message).toContain("not running");
+  });
+});
+
+describe("corrupt/truncated status file resilience", () => {
+  const statusPath = (): string => path.join(tmpDir, ".res-fetcher-status.json");
+
+  it("readBackgroundFetchWorkerStatusFile returns null for an empty status file", () => {
+    fs.writeFileSync(statusPath(), "", "utf-8");
+
+    expect(() => readBackgroundFetchWorkerStatusFile(tmpDir)).not.toThrow();
+    expect(readBackgroundFetchWorkerStatusFile(tmpDir)).toBeNull();
+  });
+
+  it("readBackgroundFetchWorkerStatusFile returns null for malformed JSON", () => {
+    fs.writeFileSync(statusPath(), '{ "this is not valid json', "utf-8");
+
+    expect(() => readBackgroundFetchWorkerStatusFile(tmpDir)).not.toThrow();
+    expect(readBackgroundFetchWorkerStatusFile(tmpDir)).toBeNull();
+  });
+
+  it("readBackgroundFetchWorkerStatusFile still parses valid JSON", () => {
+    const valid = {
+      pid: 1234,
+      startedAt: "2026-01-01T00:00:00.000Z",
+      lastHeartbeatAt: "2026-01-01T00:00:01.000Z",
+      lastFetchAtByChannel: { a: "2026-01-01T00:00:00.500Z" },
+      lastErrorByChannel: {},
+    };
+    fs.writeFileSync(statusPath(), JSON.stringify(valid, null, 2), "utf-8");
+
+    expect(readBackgroundFetchWorkerStatusFile(tmpDir)).toEqual(valid);
+  });
+
+  it("startBackgroundFetchWorker starts successfully with a corrupt status file present", async () => {
+    new Reservoir(tmpDir).initialize();
+    fs.writeFileSync(statusPath(), '{ "this is not valid json', "utf-8");
+
+    const startPromise = startWorkerForTest();
+    try {
+      await waitForWorkerOpportunity();
+      expect(fs.existsSync(path.join(tmpDir, ".res-fetcher.pid"))).toBe(true);
+    } finally {
+      const result = stopBackgroundFetchWorker(tmpDir);
+      if (result.stopped) {
+        await startPromise;
+      }
+    }
+  });
+
+  it("persists a valid status file after runBackgroundFetchWorkerStep", async () => {
+    const reservoir = new Reservoir(tmpDir).initialize();
+    const t0 = new Date("2026-01-01T00:00:00.000Z").getTime();
+    const state: BackgroundFetchWorkerState = {
+      startedAt: new Date(t0).toISOString(),
+      lastFetchAtByChannel: {},
+      lastAttemptAtByChannel: {},
+      lastErrorByChannel: {},
+    };
+
+    await runBackgroundFetchWorkerStep(tmpDir, reservoir, state, t0);
+
+    const persisted = readBackgroundFetchWorkerStatusFile(tmpDir);
+    expect(persisted).not.toBeNull();
+    expect(persisted?.pid).toBe(process.pid);
+    expect(persisted?.startedAt).toBe(state.startedAt);
   });
 });
