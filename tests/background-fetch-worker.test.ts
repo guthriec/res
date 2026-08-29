@@ -132,6 +132,31 @@ describe("runScheduledFetchStep", () => {
     expect(state.lastFetchAtByChannel.scheduled).toBeDefined();
   });
 
+  it("reports the affected content IDs to onFetchSuccess", async () => {
+    const fetchChannel = vi.fn().mockResolvedValue([
+      { id: "content-1", channelId: "scheduled", content: "one", fetchedAt: "", locks: [] },
+      { id: "content-2", channelId: "scheduled", content: "two", fetchedAt: "", locks: [] },
+    ]);
+    const onFetchSuccess = vi.fn();
+    const reservoir = {
+      listChannels: () => [mkChannel({ id: "scheduled", refreshInterval: 1 })],
+      fetchChannel,
+    };
+
+    const t0 = new Date("2026-01-01T00:00:00.000Z").getTime();
+    const state: BackgroundFetchWorkerState = {
+      startedAt: new Date(t0).toISOString(),
+      lastFetchAtByChannel: {},
+      lastAttemptAtByChannel: {},
+      lastErrorByChannel: {},
+    };
+
+    await runScheduledFetchStep(reservoir, state, t0, { onFetchSuccess });
+
+    expect(onFetchSuccess).toHaveBeenCalledTimes(1);
+    expect(onFetchSuccess).toHaveBeenCalledWith("scheduled", ["content-1", "content-2"]);
+  });
+
   it("fetches channels using default refresh interval when omitted", async () => {
     const fetchChannel = vi.fn().mockResolvedValue([]);
     const reservoir = {

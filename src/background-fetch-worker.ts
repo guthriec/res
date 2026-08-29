@@ -201,8 +201,11 @@ export function stopBackgroundFetchWorker(reservoirDir: string): {
   return { stopped: true, pid, message: `Stopped background fetcher (pid ${pid})` };
 }
 
-function getItemCount(result: unknown): number | null {
-  return Array.isArray(result) ? result.length : null;
+function getAffectedContentIds(result: unknown): string[] {
+  if (!Array.isArray(result)) return [];
+  return result
+    .map((item) => (item as { id?: unknown })?.id)
+    .filter((id): id is string => typeof id === "string");
 }
 
 export async function startBackgroundFetchWorker(
@@ -232,7 +235,7 @@ export async function runScheduledFetchStep(
   state: BackgroundFetchWorkerState,
   nowMs: number = Date.now(),
   hooks: {
-    onFetchSuccess?: (channelId: string, itemCount: number | null) => void;
+    onFetchSuccess?: (channelId: string, affectedIds: string[]) => void;
     onFetchError?: (channelId: string, message: string) => void;
   } = {},
 ): Promise<void> {
@@ -259,7 +262,7 @@ export async function runScheduledFetchStep(
       const result = await reservoir.fetchChannel(channel.id);
       state.lastFetchAtByChannel[channel.id] = new Date(nowMs).toISOString();
       delete state.lastErrorByChannel[channel.id];
-      hooks.onFetchSuccess?.(channel.id, getItemCount(result));
+      hooks.onFetchSuccess?.(channel.id, getAffectedContentIds(result));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       state.lastErrorByChannel[channel.id] = message;
@@ -298,7 +301,7 @@ export async function runBackgroundFetchWorkerStep(
   state: BackgroundFetchWorkerState,
   nowMs: number = Date.now(),
   hooks: {
-    onFetchSuccess?: (channelId: string, itemCount: number | null) => void;
+    onFetchSuccess?: (channelId: string, affectedIds: string[]) => void;
     onFetchError?: (channelId: string, message: string) => void;
   } = {},
 ): Promise<void> {
@@ -432,9 +435,8 @@ async function loopAndFetchWhileNotStopped(
 ): Promise<void> {
   while (!isStopping()) {
     await runBackgroundFetchWorkerStep(absDir, reservoir, state, Date.now(), {
-      onFetchSuccess: (channelId, itemCount) => {
-        const suffix = itemCount === null ? "" : ` (${itemCount} item(s))`;
-        emit("info", `[${channelId}] fetched${suffix}`);
+      onFetchSuccess: (channelId, affectedIds) => {
+        emit("info", `[${channelId}] fetched (${affectedIds.length} item(s))`);
       },
       onFetchError: (channelId, message) => {
         emit("error", `[${channelId}] fetch failed: ${message}`);
