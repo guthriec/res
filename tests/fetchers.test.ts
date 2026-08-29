@@ -5,26 +5,65 @@ import * as path from "path";
 // ─── RSS fetcher ──────────────────────────────────────────────────────────────
 
 vi.mock("rss-parser", () => {
-  return {
-    default: vi.fn().mockImplementation(() => ({
-      parseURL: vi.fn().mockResolvedValue({
-        items: [
-          {
-            title: "Article One",
-            link: "https://example.com/1",
-            content: "# Article One content",
-            "content:encoded": "# Article One full text",
-            contentSnippet: "Snippet one",
-          },
-          {
-            title: "Article Two",
-            link: "https://example.com/2",
-            contentSnippet: "Snippet two",
-          },
-        ],
+  const parserOptions: unknown[] = [];
+  const mockParser = vi.fn().mockImplementation((options?: unknown) => {
+    parserOptions.push(options);
+    return {
+      parseURL: vi.fn().mockImplementation((feedUrl: string) => {
+        const items =
+          feedUrl.includes("/atom-newer")
+            ? [
+                {
+                  title: "Atom One",
+                  link: "https://example.com/a/1",
+                  contentSnippet: "Snippet A1",
+                  updated: "2024-02-01T00:00:00Z",
+                  pubDate: "2023-12-01T00:00:00Z",
+                },
+                {
+                  title: "Atom Two",
+                  link: "https://example.com/a/2",
+                  contentSnippet: "Snippet A2",
+                  updated: "2024-02-02T00:00:00Z",
+                  pubDate: "2023-12-02T00:00:00Z",
+                },
+              ]
+            : feedUrl.includes("/atom")
+              ? [
+                  {
+                    title: "Atom One",
+                    link: "https://example.com/a/1",
+                    contentSnippet: "Snippet A1",
+                    updated: "2024-01-01T00:00:00Z",
+                    pubDate: "2023-12-01T00:00:00Z",
+                  },
+                  {
+                    title: "Atom Two",
+                    link: "https://example.com/a/2",
+                    contentSnippet: "Snippet A2",
+                    updated: "2024-01-02T00:00:00Z",
+                    pubDate: "2023-12-02T00:00:00Z",
+                  },
+                ]
+              : [
+                  {
+                    title: "Article One",
+                    link: "https://example.com/1",
+                    content: "# Article One content",
+                    "content:encoded": "# Article One full text",
+                    contentSnippet: "Snippet one",
+                  },
+                  {
+                    title: "Article Two",
+                    link: "https://example.com/2",
+                    contentSnippet: "Snippet two",
+                  },
+                ];
+        return Promise.resolve({ items });
       }),
-    })),
-  };
+    };
+  });
+  return { default: mockParser, __parserOptions: parserOptions };
 });
 
 describe("fetchRSS", () => {
@@ -134,7 +173,10 @@ describe("fetchRSS", () => {
       // Article 2 has no feed content, so is fetched and should record lastFetchedAt
       expect(items[1].content).toContain("lastFetchedAt:");
       // And should have fetched the URL
-      expect(mockFetch).toHaveBeenCalledWith("https://example.com/2");
+      expect(mockFetch).toHaveBeenCalledWith(
+        "https://example.com/2",
+        expect.objectContaining({ headers: expect.any(Object) }),
+      );
     });
 
     it("preserves existing item URL and pubDate in frontmatter", async () => {
@@ -146,7 +188,7 @@ describe("fetchRSS", () => {
       expect(items[1].content).toMatch(/url:\s*https:\/\/example\.com\/2/);
     });
 
-    it("skips fetch when item exists with recent lastFetchedAt after pubDate", async () => {
+    it("preserves lastFetchedAt when an existing item is not re-fetched", async () => {
       const now = new Date();
       const oldPubDate = new Date(now.getTime() - 3600000).toISOString(); // 1 hr ago
       const recentFetch = new Date(now.getTime() - 300000).toISOString(); // 5 min ago
@@ -168,9 +210,10 @@ lastFetchedAt: ${recentFetch}
           url === "https://example.com/2" ? { content: existingContent } : undefined,
       });
 
-      // Article 2 should NOT have a NEW lastFetchedAt (not re-fetched)
-      expect(items[1].content).not.toContain("lastFetchedAt:");
+      // Not re-fetched...
       expect(mockFetch).not.toHaveBeenCalled();
+      // ...but the previously recorded lastFetchedAt is carried forward unchanged
+      expect(items[1].content).toContain(`lastFetchedAt: ${recentFetch}`);
     });
 
     it("re-fetches item when its pubDate is newer than lastFetchedAt", async () => {
@@ -220,6 +263,401 @@ lastFetchedAt: ${oldFetch}
       // Even though fetch failed, lastFetchedAt should be recorded for Article 2
       expect(items[1].content).toContain("lastFetchedAt:");
       expect(mockFetch).toHaveBeenCalled();
+    });
+  });
+
+  describe("Atom updated deduplication (lastModified)", () => {
+    it("configures the parser to capture Atom <updated> as a custom field", async () => {
+      const { __parserOptions } = (await import("rss-parser")) as unknown as {
+        __parserOptions: unknown[];
+      };
+      expect(__parserOptions[0]).toEqual({
+        customFields: {
+          item: [["updated", "updated"]],
+        },
+      });
+    });
+
+    it("records Atom updated as lastModified and prefers it over pubDate", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: { get: () => "text/html; charset=utf-8" },
+        text: async () => "<html><body><p>Fetched body</p></body></html>",
+      });
+      global.fetch = mockFetch as unknown as typeof fetch;
+
+      const { fetchRSS } = await import("../src/fetchers/rss");
+      const items = await fetchRSS({ url: "https://example.com/atom" }, "chan-1", {
+        resolveExistingContent: () => undefined,
+      });
+
+      expect(items[0].content).toContain("lastModified: 2024-01-01T00:00:00.000Z");
+      expect(items[0].content).toContain("pubDate: 2023-12-01T00:00:00Z");
+    });
+
+    it("skips re-fetch when Atom updated is unchanged", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: { get: () => "text/html; charset=utf-8" },
+        text: async () => "<html><body><p>Fetched body</p></body></html>",
+      });
+      global.fetch = mockFetch as unknown as typeof fetch;
+
+      const existingContent = `---
+url: https://example.com/a/1
+pubDate: 2023-12-01T00:00:00Z
+lastModified: 2024-01-01T00:00:00.000Z
+---
+
+# Cached content`;
+
+      const { fetchRSS } = await import("../src/fetchers/rss");
+      const items = await fetchRSS({ url: "https://example.com/atom" }, "chan-1", {
+        resolveExistingContent: (url) =>
+          url === "https://example.com/a/1" ? { content: existingContent } : undefined,
+      });
+
+      // Item 1 unchanged -> not re-fetched, no new lastFetchedAt
+      expect(items[0].content).not.toContain("lastFetchedAt:");
+      expect(mockFetch).not.toHaveBeenCalledWith(
+        "https://example.com/a/1",
+        expect.anything(),
+      );
+      // Item 2 has no existing content -> fetched
+      expect(mockFetch).toHaveBeenCalledWith(
+        "https://example.com/a/2",
+        expect.objectContaining({ headers: expect.any(Object) }),
+      );
+    });
+
+    it("re-fetches when Atom updated moves forward", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: { get: () => "text/html; charset=utf-8" },
+        text: async () => "<html><body><p>Updated body</p></body></html>",
+      });
+      global.fetch = mockFetch as unknown as typeof fetch;
+
+      const existingContent = `---
+url: https://example.com/a/1
+lastModified: 2023-12-31T00:00:00.000Z
+---
+
+# Cached content`;
+
+      const { fetchRSS } = await import("../src/fetchers/rss");
+      const items = await fetchRSS({ url: "https://example.com/atom" }, "chan-1", {
+        resolveExistingContent: (url) =>
+          url === "https://example.com/a/1" ? { content: existingContent } : undefined,
+      });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "https://example.com/a/1",
+        expect.objectContaining({ headers: expect.any(Object) }),
+      );
+      expect(items[0].content).toContain("Updated body");
+      expect(items[0].content).toContain("lastFetchedAt:");
+      expect(items[0].content).toContain("lastModified: 2024-01-01T00:00:00.000Z");
+    });
+
+    it("compares against updated rather than pubDate for Atom entries", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: { get: () => "text/html; charset=utf-8" },
+        text: async () => "<html><body><p>Edited body</p></body></html>",
+      });
+      global.fetch = mockFetch as unknown as typeof fetch;
+
+      // Baseline was established from the publish date; the entry has since been
+      // edited, so updated moved past pubDate. We must re-fetch.
+      const existingContent = `---
+url: https://example.com/a/1
+pubDate: 2023-12-01T00:00:00Z
+lastModified: 2023-12-01T00:00:00.000Z
+---
+
+# Cached content`;
+
+      const { fetchRSS } = await import("../src/fetchers/rss");
+      const items = await fetchRSS({ url: "https://example.com/atom" }, "chan-1", {
+        resolveExistingContent: (url) =>
+          url === "https://example.com/a/1" ? { content: existingContent } : undefined,
+      });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "https://example.com/a/1",
+        expect.objectContaining({ headers: expect.any(Object) }),
+      );
+      expect(items[0].content).toContain("Edited body");
+    });
+
+    it("skips re-fetch when stored lastModified is newer than the feed's", async () => {
+      const mockFetch = vi.fn();
+      global.fetch = mockFetch as unknown as typeof fetch;
+
+      const existingContent = `---
+url: https://example.com/a/1
+lastModified: 2025-01-01T00:00:00.000Z
+---
+
+# Cached content`;
+
+      const { fetchRSS } = await import("../src/fetchers/rss");
+      const items = await fetchRSS({ url: "https://example.com/atom" }, "chan-1", {
+        resolveExistingContent: (url) =>
+          url === "https://example.com/a/1" ? { content: existingContent } : undefined,
+      });
+
+      expect(mockFetch).not.toHaveBeenCalledWith(
+        "https://example.com/a/1",
+        expect.anything(),
+      );
+    });
+
+    it("fetches once to establish a baseline when existing content lacks lastModified", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: { get: () => "text/html; charset=utf-8" },
+        text: async () => "<html><body><p>Baseline body</p></body></html>",
+      });
+      global.fetch = mockFetch as unknown as typeof fetch;
+
+      const existingContent = `---
+url: https://example.com/a/1
+pubDate: 2023-12-01T00:00:00Z
+lastFetchedAt: 2023-12-10T00:00:00.000Z
+---
+
+# Old cached version`;
+
+      const { fetchRSS } = await import("../src/fetchers/rss");
+      const items = await fetchRSS({ url: "https://example.com/atom" }, "chan-1", {
+        resolveExistingContent: (url) =>
+          url === "https://example.com/a/1" ? { content: existingContent } : undefined,
+      });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "https://example.com/a/1",
+        expect.objectContaining({ headers: expect.any(Object) }),
+      );
+      expect(items[0].content).toContain("Baseline body");
+      expect(items[0].content).toContain("lastModified: 2024-01-01T00:00:00.000Z");
+    });
+  });
+
+  describe("HTTP conditional requests (etag / 304)", () => {
+    it("sends stored validators as If-None-Match and If-Modified-Since", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: {
+          get: (name: string) =>
+            name.toLowerCase() === "etag"
+              ? "FRESH-ETAG"
+              : name.toLowerCase() === "last-modified"
+                ? "Mon, 01 Jan 2024 00:00:00 GMT"
+                : "text/html; charset=utf-8",
+        },
+        text: async () => "<html><body><p>Fresh body</p></body></html>",
+      });
+      global.fetch = mockFetch as unknown as typeof fetch;
+
+      const existingContent = `---
+url: https://example.com/a/1
+lastModified: 2023-12-31T00:00:00.000Z
+etag: OLD-ETAG
+httpLastModified: Sun, 31 Dec 2023 00:00:00 GMT
+---
+
+# Cached`;
+
+      const { fetchRSS } = await import("../src/fetchers/rss");
+      await fetchRSS({ url: "https://example.com/atom" }, "chan-1", {
+        resolveExistingContent: (url) =>
+          url === "https://example.com/a/1" ? { content: existingContent } : undefined,
+      });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "https://example.com/a/1",
+        expect.objectContaining({
+          headers: expect.objectContaining({
+            "If-None-Match": "OLD-ETAG",
+            "If-Modified-Since": "Sun, 31 Dec 2023 00:00:00 GMT",
+          }),
+        }),
+      );
+    });
+
+    it("reuses cached full content on 304 and does not read the body", async () => {
+      const textSpy = vi.fn();
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 304,
+        statusText: "Not Modified",
+        headers: { get: () => null },
+        text: textSpy,
+      });
+      global.fetch = mockFetch as unknown as typeof fetch;
+
+      const existingContent = `---
+url: https://example.com/a/1
+lastModified: 2023-12-31T00:00:00.000Z
+etag: OLD-ETAG
+httpLastModified: Sun, 31 Dec 2023 00:00:00 GMT
+---
+
+# Cached
+
+## Snippet
+
+old snippet
+
+## Full Content
+
+Cached full body`;
+
+      const { fetchRSS } = await import("../src/fetchers/rss");
+      const items = await fetchRSS({ url: "https://example.com/atom" }, "chan-1", {
+        resolveExistingContent: (url) =>
+          url === "https://example.com/a/1" ? { content: existingContent } : undefined,
+      });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "https://example.com/a/1",
+        expect.objectContaining({
+          headers: expect.objectContaining({ "If-None-Match": "OLD-ETAG" }),
+        }),
+      );
+      // 304 -> body never read
+      expect(textSpy).not.toHaveBeenCalled();
+      // Cached content reused, validators preserved, feed lastModified advanced
+      expect(items[0].content).toContain("Cached full body");
+      expect(items[0].content).toContain("etag: OLD-ETAG");
+      expect(items[0].content).toContain("httpLastModified: Sun, 31 Dec 2023 00:00:00 GMT");
+      expect(items[0].content).toContain("lastModified: 2024-01-01T00:00:00.000Z");
+      expect(items[0].content).toContain("lastFetchedAt:");
+    });
+
+    it("stores fresh etag and last-modified from a 200 response on first fetch", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: {
+          get: (name: string) =>
+            name.toLowerCase() === "etag"
+              ? "FRESH-ETAG"
+              : name.toLowerCase() === "last-modified"
+                ? "Mon, 01 Jan 2024 00:00:00 GMT"
+                : "text/html; charset=utf-8",
+        },
+        text: async () => "<html><body><p>Fresh body</p></body></html>",
+      });
+      global.fetch = mockFetch as unknown as typeof fetch;
+
+      const { fetchRSS } = await import("../src/fetchers/rss");
+      const items = await fetchRSS({ url: "https://example.com/atom" }, "chan-1", {
+        resolveExistingContent: () => undefined,
+      });
+
+      const init = mockFetch.mock.calls.find((call) => call[0] === "https://example.com/a/1")?.[1];
+      // First fetch has no stored validators, so no conditional headers are sent
+      expect((init as { headers?: Record<string, string> })?.headers).not.toHaveProperty(
+        "If-None-Match",
+      );
+      expect((init as { headers?: Record<string, string> })?.headers).not.toHaveProperty(
+        "If-Modified-Since",
+      );
+      expect(items[0].content).toContain("etag: FRESH-ETAG");
+      expect(items[0].content).toContain("httpLastModified: Mon, 01 Jan 2024 00:00:00 GMT");
+    });
+  });
+
+  describe("lastFetchedAt stability", () => {
+    it("keeps the produced markdown byte-identical when the feed is unchanged", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: {
+          get: (name: string) =>
+            name.toLowerCase() === "etag"
+              ? "ETAG-STABLE"
+              : name.toLowerCase() === "last-modified"
+                ? "Sun, 31 Dec 2023 00:00:00 GMT"
+                : "text/html; charset=utf-8",
+        },
+        text: async () => "<html><body><p>Stable body</p></body></html>",
+      });
+      global.fetch = mockFetch as unknown as typeof fetch;
+
+      const { fetchRSS } = await import("../src/fetchers/rss");
+
+      // First fetch: no existing content -> web pages fetched, lastFetchedAt written.
+      const first = await fetchRSS({ url: "https://example.com/atom" }, "chan-1", {
+        resolveExistingContent: () => undefined,
+      });
+      const firstItem = first[0].content;
+      expect(firstItem).toContain("lastFetchedAt:");
+
+      // Second fetch: unchanged feed lastModified -> no re-attempt, but the
+      // previously persisted lastFetchedAt is carried forward unchanged.
+      const second = await fetchRSS({ url: "https://example.com/atom" }, "chan-1", {
+        resolveExistingContent: (url) =>
+          url === "https://example.com/a/1" ? { content: firstItem } : undefined,
+      });
+      const secondItem = second[0].content;
+
+      // Only item 2 (which has no existing content) was fetched in the second round.
+      const lastCall = mockFetch.mock.calls[mockFetch.mock.calls.length - 1];
+      expect(lastCall[0]).toBe("https://example.com/a/2");
+      expect(secondItem).toBe(firstItem);
+    });
+
+    it("updates lastFetchedAt when the feed reports a newer date", async () => {
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: {
+          get: (name: string) =>
+            name.toLowerCase() === "etag"
+              ? "ETAG-FRESH"
+              : name.toLowerCase() === "last-modified"
+                ? "Tue, 01 Feb 2024 00:00:00 GMT"
+                : "text/html; charset=utf-8",
+        },
+        text: async () => "<html><body><p>Fresh body</p></body></html>",
+      });
+      global.fetch = mockFetch as unknown as typeof fetch;
+
+      const { fetchRSS } = await import("../src/fetchers/rss");
+
+      const first = await fetchRSS({ url: "https://example.com/atom" }, "chan-1", {
+        resolveExistingContent: () => undefined,
+      });
+      const firstLastFetchedAt = first[0].content.match(/lastFetchedAt:\s*(.+)/)?.[1];
+
+      const second = await fetchRSS({ url: "https://example.com/atom-newer" }, "chan-1", {
+        resolveExistingContent: (url) =>
+          url === "https://example.com/a/1" ? { content: first[0].content } : undefined,
+      });
+      const secondLastFetchedAt = second[0].content.match(/lastFetchedAt:\s*(.+)/)?.[1];
+
+      expect(second[0].content).toContain("lastModified: 2024-02-01T00:00:00.000Z");
+      expect(secondLastFetchedAt).toBeTruthy();
+      expect(secondLastFetchedAt).not.toBe(firstLastFetchedAt);
     });
   });
 });

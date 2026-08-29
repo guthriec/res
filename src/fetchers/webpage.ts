@@ -43,8 +43,36 @@ export function extractMainContentHtml(html: string, sourceUrl?: string): string
   }
 }
 
-export async function fetchWebPageMarkdown(url: string): Promise<string> {
-  const response = await fetch(url);
+export interface WebPageFetchOptions {
+  ifNoneMatch?: string;
+  ifModifiedSince?: string;
+}
+
+export interface WebPageFetchResult {
+  content: string;
+  /** True when the server replied 304 Not Modified and no body was read. */
+  notModified: boolean;
+  etag?: string;
+  lastModified?: string;
+}
+
+export async function fetchWebPageMarkdown(
+  url: string,
+  options?: WebPageFetchOptions,
+): Promise<WebPageFetchResult> {
+  const headers: Record<string, string> = {};
+  if (options?.ifNoneMatch) headers["If-None-Match"] = options.ifNoneMatch;
+  if (options?.ifModifiedSince) headers["If-Modified-Since"] = options.ifModifiedSince;
+
+  const response = await fetch(url, { headers });
+  if (response.status === 304) {
+    return {
+      content: "",
+      notModified: true,
+      etag: response.headers.get("etag") ?? options?.ifNoneMatch,
+      lastModified: response.headers.get("last-modified") ?? options?.ifModifiedSince,
+    };
+  }
   if (!response.ok) {
     throw new Error(`Failed to fetch ${url}: ${response.status} ${response.statusText}`);
   }
@@ -56,7 +84,12 @@ export async function fetchWebPageMarkdown(url: string): Promise<string> {
     throw new Error(`Unsupported content type for ${url}: ${contentType ?? "unknown"}`);
   }
   const html = await response.text();
-  return convertWebPageHtmlToMarkdown(html);
+  return {
+    content: convertWebPageHtmlToMarkdown(html),
+    notModified: false,
+    etag: response.headers.get("etag") ?? undefined,
+    lastModified: response.headers.get("last-modified") ?? undefined,
+  };
 }
 
 export async function fetchWebPage(

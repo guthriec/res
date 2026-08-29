@@ -139,6 +139,31 @@ describe("runScheduledFetchStep", () => {
     expect(state.lastFetchAtByChannel.scheduled).toBeDefined();
   });
 
+  it("reports the affected content IDs to onFetchSuccess", async () => {
+    const fetchChannel = vi.fn().mockResolvedValue([
+      { id: "content-1", channelId: "scheduled", content: "one", fetchedAt: "", locks: [] },
+      { id: "content-2", channelId: "scheduled", content: "two", fetchedAt: "", locks: [] },
+    ]);
+    const onFetchSuccess = vi.fn();
+    const reservoir = {
+      listChannels: () => [mkChannel({ id: "scheduled", refreshInterval: 1 })],
+      fetchChannel,
+    };
+
+    const t0 = new Date("2026-01-01T00:00:00.000Z").getTime();
+    const state: BackgroundFetchWorkerState = {
+      startedAt: new Date(t0).toISOString(),
+      lastFetchAtByChannel: {},
+      lastAttemptAtByChannel: {},
+      lastErrorByChannel: {},
+    };
+
+    await runScheduledFetchStep(reservoir, state, t0, { onFetchSuccess });
+
+    expect(onFetchSuccess).toHaveBeenCalledTimes(1);
+    expect(onFetchSuccess).toHaveBeenCalledWith("scheduled", ["content-1", "content-2"]);
+  });
+
   it("fetches channels using default refresh interval when omitted", async () => {
     const fetchChannel = vi.fn().mockResolvedValue([]);
     const reservoir = {
@@ -426,7 +451,7 @@ describe("runScheduledFetchStep", () => {
     await runBackgroundFetchWorkerStep(tmpDir, reservoir, state, Date.now(), { onFetchSuccess });
 
     expect(onFetchSuccess).toHaveBeenCalledTimes(1);
-    expect(onFetchSuccess).toHaveBeenCalledWith("notified", 1);
+    expect(onFetchSuccess).toHaveBeenCalledWith("notified", ["x"]);
   });
 
   it("second start cycle avoids duplicate fetch within refresh interval", async () => {
@@ -645,7 +670,7 @@ describe("startBackgroundFetchWorker / stopBackgroundFetchWorker / getBackground
     try {
       await waitForWorkerOpportunity();
       await waitForHookCalls(() => onFetchSuccess.mock.calls.length);
-      expect(onFetchSuccess).toHaveBeenCalledWith(channel.id, 1);
+      expect(onFetchSuccess).toHaveBeenCalledWith(channel.id, [expect.any(String)]);
     } finally {
       const result = stopBackgroundFetchWorker(tmpDir);
       if (result.stopped) {
