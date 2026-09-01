@@ -12,21 +12,13 @@ import { Logger } from "./logger";
 import { ChannelControllerImpl } from "./channel-controller";
 import { ContentLockState } from "./reservoir-internal-types";
 import { RelativePathHelper } from "./relative-path-helper";
+import { slugify } from "./slugify";
 import type { VersionSidecar } from "./version-store";
 import { VersionStore } from "./version-store";
 
 interface ExistingContentEntry {
   filePath: string;
   contentId?: string;
-}
-
-function contentFileSlug(title: string): string {
-  const slug = title
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return slug || "content";
 }
 
 interface FetchOrchestratorDependencies {
@@ -80,6 +72,10 @@ export class FetchOrchestrator {
 
     const fetched: FetchedContent[] = await fetcher.fetch(fetchParams, channelId, {
       resolveExistingContent,
+      getChannelBlockedState: () =>
+        this.channelController.readFullContentBlockedState(channelId),
+      setChannelBlockedState: (state) =>
+        this.channelController.writeFullContentBlockedState(channelId, state),
     });
 
     const metadata = this.channelController.loadMetadata(channelId);
@@ -254,7 +250,7 @@ export class FetchOrchestrator {
   }
 
   private createUniqueContentPath(contentDir: string, fileStem: string): string {
-    const base = contentFileSlug(fileStem);
+    const base = slugify(fileStem);
     let candidatePath = path.join(contentDir, `${base}.md`);
     let suffix = 1;
     while (fs.existsSync(candidatePath)) {
