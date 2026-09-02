@@ -131,6 +131,7 @@ async function main() {
     '---',
     `id: ${JSON.stringify(canonicalId)}`,
     'source: "open-meteo"',
+    `pubDate: ${observedAt}`,
     `location: ${JSON.stringify(locationName)}`,
     `observedAt: ${JSON.stringify(observedAt)}`,
     `latitude: ${latitude}`,
