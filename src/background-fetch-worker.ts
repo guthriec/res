@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import { writeJSONAtomicSync } from "./atomic-writes";
 import { createDirectoryWatcher } from "./file-watcher";
 import { Channel, DEFAULT_REFRESH_INTERVAL_SECONDS } from "./types";
 import { ReservoirImpl } from "./reservoir";
@@ -67,6 +68,8 @@ export interface BackgroundFetchWorkerRuntimeOptions {
   logger?: (message: string) => void;
   errorLogger?: (message: string) => void;
   logLevel?: LogLevel;
+  onFetchSuccess?: (channelId: string, affectedIds: string[]) => void;
+  onFetchError?: (channelId: string, message: string) => void;
 }
 
 /**
@@ -119,18 +122,20 @@ export function readBackgroundFetchWorkerStatusFile(
 ): BackgroundFetchWorkerStatus | null {
   const statusPath = getBackgroundFetchWorkerStatusPath(reservoirDir);
   if (!fs.existsSync(statusPath)) return null;
-  return JSON.parse(fs.readFileSync(statusPath, "utf-8")) as BackgroundFetchWorkerStatus;
+  try {
+    return JSON.parse(fs.readFileSync(statusPath, "utf-8")) as BackgroundFetchWorkerStatus;
+  } catch {
+    // A killed process can leave an empty/truncated status file behind. Treat it
+    // as "no status" so startup survives instead of crashing on invalid JSON.
+    return null;
+  }
 }
 
 function writeBackgroundFetchWorkerStatusFile(
   reservoirDir: string,
   status: BackgroundFetchWorkerStatus,
 ): void {
-  fs.writeFileSync(
-    getBackgroundFetchWorkerStatusPath(reservoirDir),
-    JSON.stringify(status, null, 2),
-    "utf-8",
-  );
+  writeJSONAtomicSync(getBackgroundFetchWorkerStatusPath(reservoirDir), status);
 }
 
 export function getBackgroundFetchWorkerStatus(
@@ -201,8 +206,11 @@ export function stopBackgroundFetchWorker(reservoirDir: string): {
   return { stopped: true, pid, message: `Stopped background fetcher (pid ${pid})` };
 }
 
-function getItemCount(result: unknown): number | null {
-  return Array.isArray(result) ? result.length : null;
+function getAffectedContentIds(result: unknown): string[] {
+  if (!Array.isArray(result)) return [];
+  return result
+    .map((item) => (item as { id?: unknown })?.id)
+    .filter((id): id is string => typeof id === "string");
 }
 
 export async function startBackgroundFetchWorker(
@@ -232,7 +240,7 @@ export async function runScheduledFetchStep(
   state: BackgroundFetchWorkerState,
   nowMs: number = Date.now(),
   hooks: {
-    onFetchSuccess?: (channelId: string, itemCount: number | null) => void;
+    onFetchSuccess?: (channelId: string, affectedIds: string[]) => void;
     onFetchError?: (channelId: string, message: string) => void;
   } = {},
 ): Promise<void> {
@@ -259,7 +267,7 @@ export async function runScheduledFetchStep(
       const result = await reservoir.fetchChannel(channel.id);
       state.lastFetchAtByChannel[channel.id] = new Date(nowMs).toISOString();
       delete state.lastErrorByChannel[channel.id];
-      hooks.onFetchSuccess?.(channel.id, getItemCount(result));
+      hooks.onFetchSuccess?.(channel.id, getAffectedContentIds(result));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       state.lastErrorByChannel[channel.id] = message;
@@ -298,7 +306,7 @@ export async function runBackgroundFetchWorkerStep(
   state: BackgroundFetchWorkerState,
   nowMs: number = Date.now(),
   hooks: {
-    onFetchSuccess?: (channelId: string, itemCount: number | null) => void;
+    onFetchSuccess?: (channelId: string, affectedIds: string[]) => void;
     onFetchError?: (channelId: string, message: string) => void;
   } = {},
 ): Promise<void> {
@@ -429,14 +437,19 @@ async function loopAndFetchWhileNotStopped(
   state: BackgroundFetchWorkerState,
   emit: WorkerEmit,
   isStopping: () => boolean,
+  hooks: {
+    onFetchSuccess?: (channelId: string, affectedIds: string[]) => void;
+    onFetchError?: (channelId: string, message: string) => void;
+  } = {},
 ): Promise<void> {
   while (!isStopping()) {
     await runBackgroundFetchWorkerStep(absDir, reservoir, state, Date.now(), {
-      onFetchSuccess: (channelId, itemCount) => {
-        const suffix = itemCount === null ? "" : ` (${itemCount} item(s))`;
-        emit("info", `[${channelId}] fetched${suffix}`);
+      onFetchSuccess: (channelId, affectedIds) => {
+        hooks.onFetchSuccess?.(channelId, affectedIds);
+        emit("info", `[${channelId}] fetched (${affectedIds.length} item(s))`);
       },
       onFetchError: (channelId, message) => {
+        hooks.onFetchError?.(channelId, message);
         emit("error", `[${channelId}] fetch failed: ${message}`);
       },
     });
@@ -458,6 +471,10 @@ interface WorkerLoop {
   reservoir: ReservoirImpl;
   state: BackgroundFetchWorkerState;
   emit: WorkerEmit;
+  hooks: {
+    onFetchSuccess?: (channelId: string, affectedIds: string[]) => void;
+    onFetchError?: (channelId: string, message: string) => void;
+  };
   isStopping: () => boolean;
   requestStop: () => void;
   teardown: () => void;
@@ -477,6 +494,10 @@ async function setupWorkerLoop(
   const stepIntervalMs = normalizeWorkerStepIntervalMs(options.tickIntervalMs);
   const { activeLogLevel, emit } = createWorkerEmitter(options);
   process.env.RES_LOG_LEVEL = activeLogLevel;
+  const hooks = {
+    onFetchSuccess: options.onFetchSuccess,
+    onFetchError: options.onFetchError,
+  };
 
   const { reservoir, state } = await loadReservoirAndState(absDir);
   const stopWatchingResync = watchChannelsForResync(absDir, reservoir, emit);
@@ -507,6 +528,7 @@ async function setupWorkerLoop(
     reservoir,
     state,
     emit,
+    hooks,
     isStopping: () => stopping,
     requestStop,
     teardown,
@@ -541,6 +563,7 @@ export async function runBackgroundFetchWorkerLoop(
       loop.state,
       loop.emit,
       loop.isStopping,
+      loop.hooks,
     );
   } finally {
     loop.requestStop();

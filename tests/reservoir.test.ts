@@ -3,7 +3,7 @@ import * as os from "os";
 import * as path from "path";
 import { ReservoirImpl } from "../src/reservoir";
 import { FetchMethod, GLOBAL_LOCK_NAME, DEFAULT_DUPLICATE_STRATEGY } from "../src/types";
-import { ReservoirError, ErrorCodes } from "../src/errors";
+import { ReservoirError, ErrorCodes, type ErrorCode } from "../src/errors";
 
 type Reservoir = ReservoirImpl;
 const Reservoir = {

@@ -10,6 +10,7 @@ import {
 import { ContentIdAllocator } from "./content-id-allocator";
 import { normalizeFetchParams } from "./fetch-params";
 import { InputNormalizer } from "./input-normalizer";
+import { slugify } from "./slugify";
 import { ContentLockState, ParsedContentFile } from "./reservoir-internal-types";
 import { RelativePathHelper } from "./relative-path-helper";
 import { writeJSONAtomic, writeJSONAtomicSync } from "./atomic-writes";
@@ -21,14 +22,10 @@ const RES_METADATA_DIR = ".res";
 const CHANNELS_DIR = "channels";
 const CHANNEL_CONFIG_FILE = "channel.json";
 const CHANNEL_METADATA_FILE = "metadata.json";
+const FULL_CONTENT_BLOCKED_FILE = "full-content-blocked.json";
 
 export function channelDirectorySlug(name: string): string {
-  const slug = name
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return slug || "channel";
+  return slugify(name, "channel");
 }
 
 export class ChannelControllerImpl implements ChannelController {
@@ -140,6 +137,50 @@ export class ChannelControllerImpl implements ChannelController {
       path.join(this.resolveChannelDir(channelId), CHANNEL_METADATA_FILE),
       metadata,
     );
+  }
+
+  /**
+   * Read the persisted per-channel "full content blocked" flag.
+   * Returns undefined when the channel has not been flagged.
+   */
+  readFullContentBlockedState(channelId: string): { blockedAt: string } | undefined {
+    const sidecarPath = this.fullContentBlockedStatePath(channelId);
+    if (!fs.existsSync(sidecarPath)) return undefined;
+    try {
+      const raw = JSON.parse(fs.readFileSync(sidecarPath, "utf-8")) as { blockedAt?: unknown };
+      if (
+        raw &&
+        typeof raw === "object" &&
+        typeof raw.blockedAt === "string" &&
+        raw.blockedAt.length > 0
+      ) {
+        return { blockedAt: raw.blockedAt };
+      }
+    } catch {
+      // Corrupt/partial sidecar — treat as unblocked so fetching can recover.
+    }
+    return undefined;
+  }
+
+  /**
+   * Persist or clear the per-channel "full content blocked" flag.
+   */
+  async writeFullContentBlockedState(
+    channelId: string,
+    state: { blockedAt: string } | undefined,
+  ): Promise<void> {
+    const sidecarPath = this.fullContentBlockedStatePath(channelId);
+    if (state === undefined) {
+      if (fs.existsSync(sidecarPath)) {
+        await fs.promises.rm(sidecarPath, { force: true });
+      }
+      return;
+    }
+    await writeJSONAtomic(sidecarPath, state);
+  }
+
+  private fullContentBlockedStatePath(channelId: string): string {
+    return path.join(this.resolveChannelDir(channelId), FULL_CONTENT_BLOCKED_FILE);
   }
 
   readContentFilesById(channelId: string): Map<string, ParsedContentFile> {
