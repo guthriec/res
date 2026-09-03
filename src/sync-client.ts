@@ -22,6 +22,12 @@ const PUBLISH_TICK_MS = 10_000;
 const SSE_RECONNECT_DELAY_MS = 5_000;
 const MAX_RECONNECT_DELAY_MS = 60_000;
 
+export type SyncClientStatus =
+  | { state: "starting" }
+  | { state: "connected"; sseConnected: boolean }
+  | { state: "reconnecting"; attempt: number; delayMs: number }
+  | { state: "error"; message: string; context: "initial-pull" | "sse" | "publish" };
+
 export interface SyncClientSubscription {
   serverUrl: string;
   serverChannelId: string;
@@ -30,6 +36,8 @@ export interface SyncClientSubscription {
   secret?: string;
   /** When true, deletions propagate both ways (destructive — opt-in). */
   syncDeletions?: boolean;
+  /** Called when the client's connection status changes. */
+  onStatusChange?: (status: SyncClientStatus) => void;
 }
 
 export class SyncClient {
@@ -129,11 +137,14 @@ export class SyncClient {
     const baseUrl = this.subscription.serverUrl.replace(/\/+$/, "");
     const url = `${baseUrl}/api/v1/channels/${this.subscription.serverChannelId}/content`;
 
+    this.emitStatus({ state: "starting" });
     this.logger.debug(`[sync] initial pull from ${url}`);
     try {
       const response = await this.fetchWithAuth(url);
       if (!response.ok) {
-        this.logger.error(`[sync] initial pull failed: ${response.status} ${response.statusText}`);
+        const msg = `${response.status} ${response.statusText}`;
+        this.logger.error(`[sync] initial pull failed: ${msg}`);
+        this.emitStatus({ state: "error", message: msg, context: "initial-pull" });
         return;
       }
 
@@ -151,6 +162,7 @@ export class SyncClient {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(`[sync] initial pull error: ${message}`);
+      this.emitStatus({ state: "error", message, context: "initial-pull" });
     }
   }
 
@@ -158,6 +170,7 @@ export class SyncClient {
 
   private async runSseLoop(): Promise<void> {
     let reconnectDelay = SSE_RECONNECT_DELAY_MS;
+    let attempt = 0;
 
     while (!this.stopRequested) {
       try {
@@ -171,7 +184,9 @@ export class SyncClient {
         }
 
         this.logger.debug("[sync] SSE connected");
+        this.emitStatus({ state: "connected", sseConnected: true });
         reconnectDelay = SSE_RECONNECT_DELAY_MS;
+        attempt = 0;
 
         const reader = response.body!.getReader();
         const decoder = new TextDecoder();
@@ -195,10 +210,13 @@ export class SyncClient {
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         this.logger.error(`[sync] SSE disconnected: ${message}`);
+        this.emitStatus({ state: "error", message, context: "sse" });
       }
 
       if (this.stopRequested) break;
 
+      attempt++;
+      this.emitStatus({ state: "reconnecting", attempt, delayMs: reconnectDelay });
       this.logger.debug(`[sync] SSE reconnecting in ${reconnectDelay}ms`);
       await this.sleep(reconnectDelay);
       reconnectDelay = Math.min(reconnectDelay * 2, MAX_RECONNECT_DELAY_MS);
@@ -497,6 +515,7 @@ export class SyncClient {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.error(`[sync] publish delete error: ${message}`);
+      this.emitStatus({ state: "error", message: `delete ${filename}: ${message}`, context: "publish" });
     }
   }
 
@@ -627,10 +646,15 @@ export class SyncClient {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.logger.debug(`[sync] publish error for ${filename}: ${message}`);
+      this.emitStatus({ state: "error", message: `${filename}: ${message}`, context: "publish" });
     }
   }
 
   // ─── Utility ──────────────────────────────────────────────────────────────
+
+  private emitStatus(status: SyncClientStatus): void {
+    this.subscription.onStatusChange?.(status);
+  }
 
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
