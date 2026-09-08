@@ -5,6 +5,21 @@ import { ReservoirImpl } from "../src/reservoir";
 import { FetchMethod, GLOBAL_LOCK_NAME, DEFAULT_DUPLICATE_STRATEGY } from "../src/types";
 import { ReservoirError, ErrorCodes, type ErrorCode } from "../src/errors";
 
+const markdownReadSpy: { paths: string[] } = { paths: [] };
+vi.mock("fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof fs>();
+  return {
+    ...actual,
+    readFileSync: (...args: Parameters<typeof fs.readFileSync>) => {
+      const target = args[0] as unknown as string;
+      if (typeof target === "string" && target.toLowerCase().endsWith(".md")) {
+        markdownReadSpy.paths.push(target);
+      }
+      return actual.readFileSync(...args);
+    },
+  };
+});
+
 type Reservoir = ReservoirImpl;
 const Reservoir = {
   initialize: (dir: string, options: { maxSizeMB?: number } = {}): ReservoirImpl =>
@@ -1039,6 +1054,196 @@ describe("listContent", () => {
     expect(listed).toHaveLength(1);
     expect(listed[0].content).toContain('status: "read"');
     expect(listed[0].content).not.toContain('tag: "news"');
+  });
+});
+
+// ─── listContent file-read scoping ──────────────────────────────────────────
+
+describe("listContent file-read scoping", () => {
+  async function countMarkdownReads(
+    fn: () => void | Promise<void>,
+  ): Promise<{ count: number; paths: string[] }> {
+    markdownReadSpy.paths = [];
+    await fn();
+    return { count: markdownReadSpy.paths.length, paths: [...markdownReadSpy.paths] };
+  }
+
+  it("filtered listContent reads only the retained files it returns", async () => {
+    const res = makeReservoir();
+    const ch1 = await res.channelController.addChannel({
+      name: "Scoping A",
+      fetchMethod: FetchMethod.RSS,
+      fetchParams: { url: "u" },
+    });
+    const ch2 = await res.channelController.addChannel({
+      name: "Scoping B",
+      fetchMethod: FetchMethod.RSS,
+      fetchParams: { url: "u" },
+    });
+
+    addTestItem(res, ch1.id, { id: "a1", title: "a1", locks: ["kitpicks-ingest"], content: "# A1" });
+    addTestItem(res, ch1.id, { id: "a2", title: "a2", locks: [], content: "# A2" });
+    addTestItem(res, ch2.id, { id: "b1", title: "b1", locks: ["kitpicks-ingest"], content: "# B1" });
+    addTestItem(res, ch2.id, { id: "b2", title: "b2", locks: [], content: "# B2" });
+    addTestItem(res, ch2.id, { id: "b3", title: "b3", locks: ["kitpicks-ingest"], content: "# B3" });
+
+    const { count, paths } = await countMarkdownReads(() => {
+      const listed = res.contentController.listContent({
+        channelIds: [ch1.id, ch2.id],
+        retainedBy: ["kitpicks-ingest"],
+      });
+      expect(listed.map((item) => item.id)).toEqual(["a1", "b1", "b3"]);
+    });
+
+    expect(count).toBe(3);
+    expect(paths.map((p) => path.basename(p)).sort()).toEqual(
+      ["a1.md", "b1.md", "b3.md"].sort(),
+    );
+  });
+
+  it("filtered listContent with pageSize reads only the page's files", async () => {
+    const res = makeReservoir();
+    const ch = await res.channelController.addChannel({
+      name: "Scoping Page",
+      fetchMethod: FetchMethod.RSS,
+      fetchParams: { url: "u" },
+    });
+
+    addTestItem(res, ch.id, { id: "p1", title: "p1", locks: ["kitpicks-ingest"], content: "# P1" });
+    addTestItem(res, ch.id, { id: "p2", title: "p2", locks: ["kitpicks-ingest"], content: "# P2" });
+    addTestItem(res, ch.id, { id: "p3", title: "p3", locks: ["kitpicks-ingest"], content: "# P3" });
+    addTestItem(res, ch.id, { id: "p4", title: "p4", locks: [], content: "# P4" });
+
+    const { count, paths } = await countMarkdownReads(() => {
+      const listed = res.contentController.listContent({
+        channelIds: [ch.id],
+        retainedBy: ["kitpicks-ingest"],
+        pageOffset: 1,
+        pageSize: 1,
+      });
+      expect(listed.map((item) => item.id)).toEqual(["p2"]);
+    });
+
+    expect(count).toBe(1);
+    expect(paths.map((p) => path.basename(p))).toEqual(["p2.md"]);
+  });
+
+  it("writeContentFrontmatter reads only the target file", async () => {
+    const res = makeReservoir();
+    const ch = await res.channelController.addChannel({
+      name: "Scoping Write",
+      fetchMethod: FetchMethod.RSS,
+      fetchParams: { url: "u" },
+    });
+    addTestItem(res, ch.id, {
+      id: "w1",
+      title: "w1",
+      locks: ["pin"],
+      content: ["---", 'status: "unread"', "---", "", "# W1"].join("\n"),
+    });
+    addTestItem(res, ch.id, { id: "w2", title: "w2", locks: [], content: "# W2" });
+    addTestItem(res, ch.id, { id: "w3", title: "w3", locks: [], content: "# W3" });
+
+    let updated: Awaited<ReturnType<typeof res.contentController.writeContentFrontmatter>>;
+    const { count, paths } = await countMarkdownReads(async () => {
+      updated = await res.contentController.writeContentFrontmatter("w1", { status: "read" });
+      expect(updated.content).toContain('status: "read"');
+    });
+
+    expect(count).toBe(1);
+    expect(paths.map((p) => path.basename(p))).toEqual(["w1.md"]);
+
+    const listed = res.contentController.listContent({ channelIds: [ch.id] });
+    expect(listed.find((i) => i.id === "w1")?.content).toContain('status: "read"');
+  });
+});
+
+// ─── getContentById ─────────────────────────────────────────────────────────
+
+describe("getContentById", () => {
+  function countMarkdownReads(fn: () => void): { count: number; paths: string[] } {
+    markdownReadSpy.paths = [];
+    fn();
+    return { count: markdownReadSpy.paths.length, paths: [...markdownReadSpy.paths] };
+  }
+
+  it("returns the correct item for a known id and reads exactly one file", async () => {
+    const res = makeReservoir();
+    const ch = await res.channelController.addChannel({
+      name: "ById",
+      fetchMethod: FetchMethod.RSS,
+      fetchParams: { url: "u" },
+    });
+    addTestItem(res, ch.id, { id: "g1", locks: ["pin"], content: "# G1 Body" });
+    addTestItem(res, ch.id, { id: "g2", locks: [], content: "# G2 Body" });
+
+    const { count } = countMarkdownReads(() => {
+      const item = res.contentController.getContentById(ch.id, "g1");
+      expect(item).not.toBeNull();
+      expect(item?.id).toBe("g1");
+      expect(item?.channelId).toBe(ch.id);
+      expect(item?.content).toBe("# G1 Body");
+      expect(item?.locks).toEqual(["pin"]);
+      expect(item?.title).toBe("G1 Body");
+    });
+
+    expect(count).toBe(1);
+  });
+
+  it("returns null for an unknown id", async () => {
+    const res = makeReservoir();
+    const ch = await res.channelController.addChannel({
+      name: "ById unknown",
+      fetchMethod: FetchMethod.RSS,
+      fetchParams: { url: "u" },
+    });
+    addTestItem(res, ch.id, { id: "known", locks: [], content: "# Known" });
+    expect(res.contentController.getContentById(ch.id, "missing")).toBeNull();
+  });
+
+  it("returns null for a missing file", async () => {
+    const res = makeReservoir();
+    const ch = await res.channelController.addChannel({
+      name: "ById missing file",
+      fetchMethod: FetchMethod.RSS,
+      fetchParams: { url: "u" },
+    });
+    addTestItem(res, ch.id, { id: "gone", locks: [], content: "# Gone" });
+    const file = contentPathForId(ch.id, "gone");
+    expect(file).not.toBeNull();
+    fs.unlinkSync(file!);
+
+    expect(res.contentController.getContentById(ch.id, "gone")).toBeNull();
+  });
+
+  it("resolves an id whose path comes from the allocator mapping", async () => {
+    const res = makeReservoir();
+    const ch = await res.channelController.addChannel({
+      name: "ById mapped",
+      fetchMethod: FetchMethod.RSS,
+      fetchParams: { url: "u" },
+    });
+
+    // Seed metadata with no filePath and a stale/absent path, but with a valid
+    // mapping entry so resolution must come from the allocator map.
+    const contentDir = channelContentDir(ch.id);
+    fs.mkdirSync(contentDir, { recursive: true });
+    fs.writeFileSync(path.join(contentDir, "real.md"), "# Real");
+
+    const metaPath = path.join(channelDirForId(ch.id), "metadata.json");
+    fs.writeFileSync(
+      metaPath,
+      JSON.stringify({
+        items: [{ id: "mapped1", locks: ["pin"], fetchedAt: "2024-01-01T00:00:00.000Z" }],
+      }),
+    );
+    const mapPath = path.join(tmpDir, ".res-content-id.map.json");
+    fs.writeFileSync(mapPath, JSON.stringify({ mapped1: path.join(ch.id, "real.md") }));
+
+    const item = res.contentController.getContentById(ch.id, "mapped1");
+    expect(item).not.toBeNull();
+    expect(item?.content).toBe("# Real");
+    expect(item?.id).toBe("mapped1");
   });
 });
 

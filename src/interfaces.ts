@@ -17,6 +17,7 @@ export interface ContentController {
     pageOffset?: number;
   }): ContentItem[];
   listRetained(channelIds?: string[]): ContentItem[];
+  getContentById(channelId: string, contentId: string): ContentItem | null;
   readContentFrontmatterMap(contentId: string): Record<string, string>;
   readContentFrontmatter(contentId: string, key: string): string | undefined;
   writeContentFrontmatter(
