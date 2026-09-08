@@ -15,7 +15,7 @@ import { Logger, type LogLevel } from "./logger";
 
 const FETCHER_PID_FILE = ".res-fetcher.pid";
 const FETCHER_STATUS_FILE = ".res-fetcher-status.json";
-const MIN_WORKER_STEP_INTERVAL_MS = 50;
+const MIN_HEARTBEAT_INTERVAL_MS = 50;
 const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
 /** Slow periodic scan used when the filesystem cannot be recursively watched. */
 const FALLBACK_SCAN_INTERVAL_MS = 60_000;
@@ -74,14 +74,6 @@ export interface SchedulerReservoir {
 }
 
 export interface BackgroundFetchWorkerRuntimeOptions {
-  /**
-   * Deprecated. Previously this forced a fixed sleep cadence between worker
-   * steps so the loop ticked constantly (default 1000 ms). It is now ignored:
-   * the loop only wakes for real reasons (a channel's fetch deadline, the
-   * heartbeat, a channel-config change, or a stop request) and idles between
-   * them. Kept for backward compatibility so existing callers keep working.
-   */
-  tickIntervalMs?: number;
   /**
    * How often, in milliseconds, to persist a heartbeat status file while the
    * worker is idle with no fetch due. Defaults to 30_000. Heartbeat writes only
@@ -508,7 +500,7 @@ async function loopAndFetchWhileNotStopped(
 
 function normalizeHeartbeatIntervalMs(value: number | undefined): number {
   const configured = value ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
-  return Math.max(MIN_WORKER_STEP_INTERVAL_MS, configured);
+  return Math.max(MIN_HEARTBEAT_INTERVAL_MS, configured);
 }
 
 interface WorkerLoop {

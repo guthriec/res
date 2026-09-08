@@ -22,9 +22,7 @@ import {
 
 let tmpDir: string;
 let previousXdgConfigHome: string | undefined;
-const WORKER_TEST_TICK_INTERVAL_MS = 20;
 const WORKER_TEST_OPTIONS = {
-  tickIntervalMs: WORKER_TEST_TICK_INTERVAL_MS,
   logLevel: "silent" as const,
   logger: () => undefined,
   errorLogger: () => undefined,
@@ -65,9 +63,7 @@ function startWorkerForTest(): Promise<void> {
 }
 
 async function waitForWorkerOpportunity(): Promise<void> {
-  await waitForWorkerStartAndFetchOpportunity(tmpDir, {
-    tickIntervalMs: WORKER_TEST_TICK_INTERVAL_MS,
-  });
+  await waitForWorkerStartAndFetchOpportunity(tmpDir);
 }
 
 async function stopWorkerAndAwait(startPromise: Promise<void>): Promise<void> {
@@ -622,7 +618,6 @@ describe("startBackgroundFetchWorker / stopBackgroundFetchWorker / getBackground
     new Reservoir(tmpDir).initialize();
 
     const startPromise = startBackgroundFetchWorker(tmpDir, {
-      tickIntervalMs: 10,
       logLevel: "silent",
       logger: () => undefined,
       errorLogger: () => undefined,
@@ -660,7 +655,6 @@ describe("startBackgroundFetchWorker / stopBackgroundFetchWorker / getBackground
 
     const onFetchSuccess = vi.fn();
     const startPromise = startBackgroundFetchWorker(tmpDir, {
-      tickIntervalMs: WORKER_TEST_TICK_INTERVAL_MS,
       logLevel: "silent",
       logger: () => undefined,
       errorLogger: () => undefined,
@@ -691,7 +685,6 @@ describe("startBackgroundFetchWorker / stopBackgroundFetchWorker / getBackground
 
     const onFetchError = vi.fn();
     const startPromise = startBackgroundFetchWorker(tmpDir, {
-      tickIntervalMs: WORKER_TEST_TICK_INTERVAL_MS,
       logLevel: "silent",
       logger: () => undefined,
       errorLogger: () => undefined,
@@ -857,7 +850,6 @@ describe("idle wake-for-reason loop", () => {
     });
 
     const startPromise = startBackgroundFetchWorker(tmpDir, {
-      tickIntervalMs: WORKER_TEST_TICK_INTERVAL_MS,
       heartbeatIntervalMs: 200,
       logLevel: "silent",
       logger: () => undefined,
@@ -872,9 +864,10 @@ describe("idle wake-for-reason loop", () => {
       }, 5000);
       const snapshot = statusSnapshot();
 
-      // Over several old-style tick windows, the status file must not be touched.
+      // Over several short sample windows well inside the heartbeat interval,
+      // the status file must not be touched.
       for (let i = 0; i < 5; i += 1) {
-        await new Promise((resolve) => setTimeout(resolve, WORKER_TEST_TICK_INTERVAL_MS));
+        await new Promise((resolve) => setTimeout(resolve, 20));
         expect(statusSnapshot()).toEqual(snapshot);
       }
 
@@ -892,16 +885,13 @@ describe("idle wake-for-reason loop", () => {
   it("versions a reservoir file created while the loop is idle, without a fetch deadline", async () => {
     new Reservoir(tmpDir).initialize();
     const startPromise = startBackgroundFetchWorker(tmpDir, {
-      tickIntervalMs: WORKER_TEST_TICK_INTERVAL_MS,
       logLevel: "silent",
       logger: () => undefined,
       errorLogger: () => undefined,
     });
 
     try {
-      await waitForWorkerStartAndFetchOpportunity(tmpDir, {
-        tickIntervalMs: WORKER_TEST_TICK_INTERVAL_MS,
-      });
+      await waitForWorkerStartAndFetchOpportunity(tmpDir);
 
       const mdPath = path.join(tmpDir, "notes", "hello.md");
       fs.mkdirSync(path.dirname(mdPath), { recursive: true });
@@ -918,16 +908,13 @@ describe("idle wake-for-reason loop", () => {
   it("interrupts a far-future idle sleep promptly on stop", async () => {
     new Reservoir(tmpDir).initialize();
     const startPromise = startBackgroundFetchWorker(tmpDir, {
-      tickIntervalMs: WORKER_TEST_TICK_INTERVAL_MS,
       logLevel: "silent",
       logger: () => undefined,
       errorLogger: () => undefined,
     });
 
     try {
-      await waitForWorkerStartAndFetchOpportunity(tmpDir, {
-        tickIntervalMs: WORKER_TEST_TICK_INTERVAL_MS,
-      });
+      await waitForWorkerStartAndFetchOpportunity(tmpDir);
 
       const beganAt = Date.now();
       const result = stopBackgroundFetchWorker(tmpDir);
@@ -946,16 +933,13 @@ describe("idle wake-for-reason loop", () => {
     const registered = reservoir.addFetcher(executablePath);
 
     const startPromise = startBackgroundFetchWorker(tmpDir, {
-      tickIntervalMs: WORKER_TEST_TICK_INTERVAL_MS,
       logLevel: "silent",
       logger: () => undefined,
       errorLogger: () => undefined,
     });
 
     try {
-      await waitForWorkerStartAndFetchOpportunity(tmpDir, {
-        tickIntervalMs: WORKER_TEST_TICK_INTERVAL_MS,
-      });
+      await waitForWorkerStartAndFetchOpportunity(tmpDir);
       // Let the worker finish its channel-less first step and enter the idle sleep.
       await new Promise((resolve) => setTimeout(resolve, 300));
 

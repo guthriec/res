@@ -417,7 +417,7 @@ describe("startBackgroundFetcher / stopBackgroundFetcher / getBackgroundFetcherS
 
     const pidFile = path.join(tmpDir, ".res-fetcher.pid");
     const statusFile = path.join(tmpDir, ".res-fetcher-status.json");
-    const startPromise = startBackgroundFetcher(tmpDir, { tickIntervalMs: 10 });
+    const startPromise = startBackgroundFetcher(tmpDir);
 
     for (let i = 0; i < 100; i += 1) {
       if (fs.existsSync(pidFile) && fs.existsSync(statusFile)) break;

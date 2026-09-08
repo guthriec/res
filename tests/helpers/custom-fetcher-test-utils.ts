@@ -97,12 +97,10 @@ export function createFailingCustomFetcherExecutable(tmpDir: string): string {
 export async function waitForWorkerStartAndFetchOpportunity(
   reservoirDir: string,
   options: {
-    tickIntervalMs?: number;
     startupPollMs?: number;
     startupPollLimit?: number;
   } = {},
 ): Promise<void> {
-  const tickIntervalMs = options.tickIntervalMs ?? 20;
   const startupPollMs = options.startupPollMs ?? 10;
   const startupPollLimit = options.startupPollLimit ?? 200;
   const pidPath = path.join(reservoirDir, ".res-fetcher.pid");
@@ -118,8 +116,8 @@ export async function waitForWorkerStartAndFetchOpportunity(
     }
   }
 
-  // Allow at least one scheduler tick after startup so a fetch can run.
-  await new Promise((resolve) => setTimeout(resolve, tickIntervalMs * 2));
+  // Allow the immediate first step after startup so a fetch can run.
+  await new Promise((resolve) => setTimeout(resolve, 50));
 }
 
 export function countRunsFromMarker(runMarkerPath: string): number {
