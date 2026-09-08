@@ -74,19 +74,28 @@ export class ChangeDetector {
    * Start watching the reservoir's content directories for changes.
    * The watcher triggers a full scan whenever a filesystem event occurs.
    *
+   * `onWatchState` (if provided) is invoked once to report whether a recursive
+   * filesystem watcher actually attached; callers can use `false` to install a
+   * periodic-scan fallback for filesystems that do not support recursive
+   * watching.
+   *
    * Returns a cleanup function that stops watching. Idempotent.
    */
-  startWatching(): () => void {
+  startWatching(onWatchState?: (watching: boolean) => void): () => void {
     if (this.cleanupWatcher) {
       return this.cleanupWatcher;
     }
 
-    const stopWatcher = createDirectoryWatcher(this.reservoirDir, () => {
-      this.scanAll().catch((err: unknown) => {
-        const message = err instanceof Error ? err.message : String(err);
-        this.logger.error(`[change-detector] scan failed: ${message}`);
-      });
-    });
+    const stopWatcher = createDirectoryWatcher(
+      this.reservoirDir,
+      () => {
+        this.scanAll().catch((err: unknown) => {
+          const message = err instanceof Error ? err.message : String(err);
+          this.logger.error(`[change-detector] scan failed: ${message}`);
+        });
+      },
+      { onWatchState },
+    );
 
     const cleanup = (): void => {
       if (this.cleanupWatcher) {
