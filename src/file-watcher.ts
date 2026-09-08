@@ -7,6 +7,13 @@ export interface DirectoryWatcherOptions {
    * to the callback.
    */
   debounceMs?: number;
+  /**
+   * Called once, synchronously, after the watcher setup attempt completes.
+   * `true` when a recursive `fs.watch` is actively attached, `false` when the
+   * directory is missing or the filesystem does not support recursive watching
+   * (e.g. some network/FUSE mounts) and only a no-op cleanup is returned.
+   */
+  onWatchState?: (watching: boolean) => void;
 }
 
 /**
@@ -29,6 +36,7 @@ export function createDirectoryWatcher(
   let watcher: fs.FSWatcher | undefined;
 
   const debounceMs = options?.debounceMs ?? 250;
+  const onWatchState = options?.onWatchState;
 
   const scheduleCallback = (): void => {
     if (pendingTimeout !== undefined) {
@@ -41,6 +49,7 @@ export function createDirectoryWatcher(
   };
 
   if (!fs.existsSync(dir)) {
+    onWatchState?.(false);
     return () => {};
   }
 
@@ -51,6 +60,8 @@ export function createDirectoryWatcher(
   } catch {
     watcher = undefined;
   }
+
+  onWatchState?.(watcher !== undefined);
 
   return () => {
     if (pendingTimeout !== undefined) {

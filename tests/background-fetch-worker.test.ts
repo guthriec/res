@@ -22,9 +22,7 @@ import {
 
 let tmpDir: string;
 let previousXdgConfigHome: string | undefined;
-const WORKER_TEST_TICK_INTERVAL_MS = 20;
 const WORKER_TEST_OPTIONS = {
-  tickIntervalMs: WORKER_TEST_TICK_INTERVAL_MS,
   logLevel: "silent" as const,
   logger: () => undefined,
   errorLogger: () => undefined,
@@ -65,9 +63,7 @@ function startWorkerForTest(): Promise<void> {
 }
 
 async function waitForWorkerOpportunity(): Promise<void> {
-  await waitForWorkerStartAndFetchOpportunity(tmpDir, {
-    tickIntervalMs: WORKER_TEST_TICK_INTERVAL_MS,
-  });
+  await waitForWorkerStartAndFetchOpportunity(tmpDir);
 }
 
 async function stopWorkerAndAwait(startPromise: Promise<void>): Promise<void> {
@@ -622,7 +618,6 @@ describe("startBackgroundFetchWorker / stopBackgroundFetchWorker / getBackground
     new Reservoir(tmpDir).initialize();
 
     const startPromise = startBackgroundFetchWorker(tmpDir, {
-      tickIntervalMs: 10,
       logLevel: "silent",
       logger: () => undefined,
       errorLogger: () => undefined,
@@ -660,7 +655,6 @@ describe("startBackgroundFetchWorker / stopBackgroundFetchWorker / getBackground
 
     const onFetchSuccess = vi.fn();
     const startPromise = startBackgroundFetchWorker(tmpDir, {
-      tickIntervalMs: WORKER_TEST_TICK_INTERVAL_MS,
       logLevel: "silent",
       logger: () => undefined,
       errorLogger: () => undefined,
@@ -691,7 +685,6 @@ describe("startBackgroundFetchWorker / stopBackgroundFetchWorker / getBackground
 
     const onFetchError = vi.fn();
     const startPromise = startBackgroundFetchWorker(tmpDir, {
-      tickIntervalMs: WORKER_TEST_TICK_INTERVAL_MS,
       logLevel: "silent",
       logger: () => undefined,
       errorLogger: () => undefined,
@@ -820,5 +813,155 @@ describe("corrupt/truncated status file resilience", () => {
     expect(persisted).not.toBeNull();
     expect(persisted?.pid).toBe(process.pid);
     expect(persisted?.startedAt).toBe(state.startedAt);
+  });
+});
+
+describe("idle wake-for-reason loop", () => {
+  const statusPath = (): string => path.join(tmpDir, ".res-fetcher-status.json");
+
+  async function waitForCondition(
+    condition: () => boolean,
+    timeoutMs: number,
+    intervalMs = 25,
+  ): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (condition()) return;
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+    expect(condition()).toBe(true);
+  }
+
+  function statusSnapshot(): { mtimeMs: number; content: string } {
+    return {
+      mtimeMs: fs.statSync(statusPath()).mtimeMs,
+      content: fs.readFileSync(statusPath(), "utf-8"),
+    };
+  }
+
+  it("does not rewrite the status file per tick while idle, then rewrites on heartbeat", async () => {
+    const reservoir = new Reservoir(tmpDir).initialize();
+    // FetchMethod.None keeps the startup fetch instant (no process spawn), so the
+    // idle assertion window cannot race with the fetch duration.
+    const channel = await reservoir.channelController.addChannel({
+      name: "Idle Channel",
+      fetchMethod: FetchMethod.None,
+      refreshInterval: 86400,
+    });
+
+    const startPromise = startBackgroundFetchWorker(tmpDir, {
+      heartbeatIntervalMs: 200,
+      logLevel: "silent",
+      logger: () => undefined,
+      errorLogger: () => undefined,
+    });
+
+    try {
+      // Wait for the initial (immediate) fetch to complete.
+      await waitForCondition(() => {
+        const status = readBackgroundFetchWorkerStatusFile(tmpDir);
+        return Boolean(status?.lastFetchAtByChannel[channel.id]);
+      }, 5000);
+      const snapshot = statusSnapshot();
+
+      // Over several short sample windows well inside the heartbeat interval,
+      // the status file must not be touched.
+      for (let i = 0; i < 5; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(statusSnapshot()).toEqual(snapshot);
+      }
+
+      // Once the heartbeat interval elapses, the status file IS rewritten.
+      await waitForCondition(() => {
+        const current = statusSnapshot();
+        return current.mtimeMs !== snapshot.mtimeMs || current.content !== snapshot.content;
+      }, 2000);
+    } finally {
+      const result = stopBackgroundFetchWorker(tmpDir);
+      if (result.stopped) await startPromise;
+    }
+  });
+
+  it("versions a reservoir file created while the loop is idle, without a fetch deadline", async () => {
+    new Reservoir(tmpDir).initialize();
+    const startPromise = startBackgroundFetchWorker(tmpDir, {
+      logLevel: "silent",
+      logger: () => undefined,
+      errorLogger: () => undefined,
+    });
+
+    try {
+      await waitForWorkerStartAndFetchOpportunity(tmpDir);
+
+      const mdPath = path.join(tmpDir, "notes", "hello.md");
+      fs.mkdirSync(path.dirname(mdPath), { recursive: true });
+      fs.writeFileSync(mdPath, "Hello, idle!\n");
+
+      const sidecarPath = `${mdPath}.res-version.json`;
+      await waitForCondition(() => fs.existsSync(sidecarPath), 5000);
+    } finally {
+      const result = stopBackgroundFetchWorker(tmpDir);
+      if (result.stopped) await startPromise;
+    }
+  });
+
+  it("interrupts a far-future idle sleep promptly on stop", async () => {
+    new Reservoir(tmpDir).initialize();
+    const startPromise = startBackgroundFetchWorker(tmpDir, {
+      logLevel: "silent",
+      logger: () => undefined,
+      errorLogger: () => undefined,
+    });
+
+    try {
+      await waitForWorkerStartAndFetchOpportunity(tmpDir);
+
+      const beganAt = Date.now();
+      const result = stopBackgroundFetchWorker(tmpDir);
+      expect(result.stopped).toBe(true);
+      await startPromise;
+      expect(Date.now() - beganAt).toBeLessThan(2000);
+    } finally {
+      const result = stopBackgroundFetchWorker(tmpDir);
+      if (result.stopped) await startPromise;
+    }
+  });
+
+  it("picks up a channel added while idle by waking the sleeping loop", async () => {
+    const reservoir = new Reservoir(tmpDir).initialize();
+    const executablePath = createFixtureCustomFetcherExecutable(tmpDir);
+    const registered = reservoir.addFetcher(executablePath);
+
+    const startPromise = startBackgroundFetchWorker(tmpDir, {
+      logLevel: "silent",
+      logger: () => undefined,
+      errorLogger: () => undefined,
+    });
+
+    try {
+      await waitForWorkerStartAndFetchOpportunity(tmpDir);
+      // Let the worker finish its channel-less first step and enter the idle sleep.
+      await new Promise((resolve) => setTimeout(resolve, 300));
+
+      const channel = await reservoir.channelController.addChannel({
+        name: "Late Channel",
+        fetchMethod: registered.name,
+        refreshInterval: 86400,
+      });
+
+      await waitForCondition(() => {
+        const status = readBackgroundFetchWorkerStatusFile(tmpDir);
+        return Boolean(status?.lastFetchAtByChannel[channel.id]);
+      }, 5000);
+
+      const items = reservoir.contentController.listContent({
+        channelIds: [channel.id],
+        retained: false,
+      });
+      expect(items.length).toBeGreaterThan(0);
+    } finally {
+      const result = stopBackgroundFetchWorker(tmpDir);
+      if (result.stopped) await startPromise;
+    }
   });
 });

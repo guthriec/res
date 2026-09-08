@@ -1,14 +1,24 @@
 import * as fs from "fs";
 import * as path from "path";
 import { writeJSONAtomicSync } from "./atomic-writes";
+import { ChangeDetector } from "./change-detector";
 import { createDirectoryWatcher } from "./file-watcher";
-import { Channel, DEFAULT_REFRESH_INTERVAL_SECONDS } from "./types";
+import {
+  channelPollIntervalMs,
+  computeNextFetchDeadlineMs,
+  createCancellableSleep,
+  type CancellableSleep,
+} from "./background-fetch-scheduler";
+import { Channel } from "./types";
 import { ReservoirImpl } from "./reservoir";
 import { Logger, type LogLevel } from "./logger";
 
 const FETCHER_PID_FILE = ".res-fetcher.pid";
 const FETCHER_STATUS_FILE = ".res-fetcher-status.json";
-const MIN_WORKER_STEP_INTERVAL_MS = 50;
+const MIN_HEARTBEAT_INTERVAL_MS = 50;
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
+/** Slow periodic scan used when the filesystem cannot be recursively watched. */
+const FALLBACK_SCAN_INTERVAL_MS = 60_000;
 
 /**
  * Persisted status payload stored on disk.
@@ -64,7 +74,12 @@ export interface SchedulerReservoir {
 }
 
 export interface BackgroundFetchWorkerRuntimeOptions {
-  tickIntervalMs?: number;
+  /**
+   * How often, in milliseconds, to persist a heartbeat status file while the
+   * worker is idle with no fetch due. Defaults to 30_000. Heartbeat writes only
+   * update the status file — they never scan the reservoir or run fetches.
+   */
+  heartbeatIntervalMs?: number;
   logger?: (message: string) => void;
   errorLogger?: (message: string) => void;
   logLevel?: LogLevel;
@@ -227,14 +242,6 @@ export async function startBackgroundFetchWorker(
   await runBackgroundFetchWorkerLoop(absDir, options);
 }
 
-function channelPollInterval(channel: Channel): number {
-  const refreshInterval =
-    channel.refreshInterval > 0 ? channel.refreshInterval : DEFAULT_REFRESH_INTERVAL_SECONDS;
-  const rateLimit =
-    channel.rateLimitInterval && channel.rateLimitInterval > 0 ? channel.rateLimitInterval : 0;
-  return Math.max(refreshInterval, rateLimit);
-}
-
 export async function runScheduledFetchStep(
   reservoir: SchedulerReservoir,
   state: BackgroundFetchWorkerState,
@@ -253,7 +260,7 @@ export async function runScheduledFetchStep(
     : (reservoir.listChannels?.() ?? []);
 
   for (const channel of channels) {
-    const pollIntervalMs = channelPollInterval(channel) * 1000;
+    const pollIntervalMs = channelPollIntervalMs(channel);
     const lastAttempt = state.lastAttemptAtByChannel[channel.id];
     if (lastAttempt) {
       const elapsed = nowMs - new Date(lastAttempt).getTime();
@@ -297,6 +304,10 @@ export function createBackgroundFetchWorkerState(existing?: {
  * 1) run one scheduled fetch step across channels, and
  * 2) persist current worker status/heartbeat to disk.
  *
+ * Change detection is intentionally *not* part of a step: it is handled once at
+ * startup and then reactively by the reservoir file watcher (see
+ * `setupWorkerLoop`), so a step stays cheap and finite.
+ *
  * This is intentionally finite and side-effectful so it can be reused both by
  * the long-lived loop and by tests that need deterministic single-step behavior.
  */
@@ -310,15 +321,6 @@ export async function runBackgroundFetchWorkerStep(
     onFetchError?: (channelId: string, message: string) => void;
   } = {},
 ): Promise<void> {
-  // Detect local file changes before scheduling fetches
-  try {
-    const { ChangeDetector } = await import("./change-detector");
-    const detector = new ChangeDetector(path.resolve(reservoirDir));
-    await detector.scanAll();
-  } catch {
-    // non-fatal — change detection is a best-effort step
-  }
-
   await runScheduledFetchStep(reservoir, state, nowMs, hooks);
   writeBackgroundFetchWorkerStatusFile(path.resolve(reservoirDir), {
     pid: process.pid,
@@ -387,6 +389,8 @@ function persistWorkerStatus(absDir: string, state: BackgroundFetchWorkerState):
  *
  * "Watching for resync" means listening for channel config file changes so the
  * in-memory channel/content tracking is reloaded before the next scheduled tick.
+ * The provided `wake` callback also interrupts the idle loop so newly added or
+ * updated channels are picked up without waiting for the next fetch deadline.
  *
  * Returns a cleanup function that stops the file watcher and cancels any pending
  * debounced sync callback.
@@ -395,10 +399,12 @@ function watchChannelsForResync(
   absDir: string,
   reservoir: ReservoirImpl,
   emit: WorkerEmit,
+  wake: () => void,
 ): () => void {
   const channelsDir = path.join(absDir, ".res", "channels");
 
   return createDirectoryWatcher(channelsDir, () => {
+    wake();
     reservoir.syncContentTracking().catch((err: unknown) => {
       const message = err instanceof Error ? err.message : String(err);
       emit("error", `[sync] failed: ${message}`);
@@ -424,15 +430,23 @@ function registerShutdownHandlers(shutdown: () => void): () => void {
 }
 
 /**
- * Repeats worker steps until shutdown is requested.
+ * Repeats worker steps until shutdown is requested, waking only for real work.
  *
- * This helper owns only the repeated execution behavior (loop + sleep between
- * iterations). It does not own process wiring (signals/watchers/startup), which
- * is handled by runBackgroundFetchWorkerLoop().
+ * The loop runs a step immediately on entry, then idles: it sleeps until the
+ * earliest of the next channel fetch deadline and the next heartbeat, and only
+ * wakes early for channel-config changes or a stop request (via `sleeper`).
+ * On a fetch deadline it runs a full step; on a heartbeat it only persists the
+ * status file. The channel set is re-read after every wake so channels added
+ * while idle are picked up.
+ *
+ * This helper owns only the repeated execution behavior (loop + interruptible
+ * sleep). It does not own process wiring (signals/watchers/startup), which is
+ * handled by runBackgroundFetchWorkerLoop().
  */
 async function loopAndFetchWhileNotStopped(
   absDir: string,
-  stepIntervalMs: number,
+  heartbeatIntervalMs: number,
+  sleeper: CancellableSleep,
   reservoir: ReservoirImpl,
   state: BackgroundFetchWorkerState,
   emit: WorkerEmit,
@@ -442,32 +456,57 @@ async function loopAndFetchWhileNotStopped(
     onFetchError?: (channelId: string, message: string) => void;
   } = {},
 ): Promise<void> {
+  let isFetchDue = true;
+  let lastStatusWriteAt = Date.now();
+
   while (!isStopping()) {
-    await runBackgroundFetchWorkerStep(absDir, reservoir, state, Date.now(), {
-      onFetchSuccess: (channelId, affectedIds) => {
-        hooks.onFetchSuccess?.(channelId, affectedIds);
-        emit("info", `[${channelId}] fetched (${affectedIds.length} item(s))`);
-      },
-      onFetchError: (channelId, message) => {
-        hooks.onFetchError?.(channelId, message);
-        emit("error", `[${channelId}] fetch failed: ${message}`);
-      },
-    });
+    if (isFetchDue) {
+      await runBackgroundFetchWorkerStep(absDir, reservoir, state, Date.now(), {
+        onFetchSuccess: (channelId, affectedIds) => {
+          hooks.onFetchSuccess?.(channelId, affectedIds);
+          emit("info", `[${channelId}] fetched (${affectedIds.length} item(s))`);
+        },
+        onFetchError: (channelId, message) => {
+          hooks.onFetchError?.(channelId, message);
+          emit("error", `[${channelId}] fetch failed: ${message}`);
+        },
+      });
+      lastStatusWriteAt = Date.now();
+    } else {
+      persistWorkerStatus(absDir, state);
+      lastStatusWriteAt = Date.now();
+    }
     if (isStopping()) {
       break;
     }
-    await new Promise((resolve) => setTimeout(resolve, stepIntervalMs));
+
+    const nextFetchDeadlineMs = computeNextFetchDeadlineMs(
+      state.lastAttemptAtByChannel,
+      reservoir.channelController.listChannels(),
+      Date.now(),
+    );
+    const nextHeartbeatDeadlineMs = lastStatusWriteAt + heartbeatIntervalMs;
+    await sleeper.sleepUntil(Math.min(nextFetchDeadlineMs, nextHeartbeatDeadlineMs));
+    if (isStopping()) {
+      break;
+    }
+
+    const nowMs = Date.now();
+    const refreshedChannels = reservoir.channelController.listChannels();
+    isFetchDue =
+      computeNextFetchDeadlineMs(state.lastAttemptAtByChannel, refreshedChannels, nowMs) <= nowMs;
   }
 }
 
-function normalizeWorkerStepIntervalMs(value: number | undefined): number {
-  const configured = value ?? 1000;
-  return Math.max(MIN_WORKER_STEP_INTERVAL_MS, configured);
+function normalizeHeartbeatIntervalMs(value: number | undefined): number {
+  const configured = value ?? DEFAULT_HEARTBEAT_INTERVAL_MS;
+  return Math.max(MIN_HEARTBEAT_INTERVAL_MS, configured);
 }
 
 interface WorkerLoop {
   absDir: string;
-  stepIntervalMs: number;
+  heartbeatIntervalMs: number;
+  sleeper: CancellableSleep;
   reservoir: ReservoirImpl;
   state: BackgroundFetchWorkerState;
   emit: WorkerEmit;
@@ -485,13 +524,18 @@ interface WorkerLoop {
  *
  * This method owns startup setup (logger/state/watchers/signals) while the
  * fetch loop itself is handled by loopAndFetchWhileNotStopped().
+ *
+ * Change detection is booted here rather than per step: a single ChangeDetector
+ * scans once at startup and then watches the reservoir tree reactively. When
+ * recursive fs.watch is unavailable (e.g. network/FUSE mounts), it falls back to
+ * a slow periodic scan so versioning still converges.
  */
 async function setupWorkerLoop(
   reservoirDir: string,
   options: BackgroundFetchWorkerRuntimeOptions,
 ): Promise<WorkerLoop> {
   const absDir = path.resolve(reservoirDir);
-  const stepIntervalMs = normalizeWorkerStepIntervalMs(options.tickIntervalMs);
+  const heartbeatIntervalMs = normalizeHeartbeatIntervalMs(options.heartbeatIntervalMs);
   const { activeLogLevel, emit } = createWorkerEmitter(options);
   process.env.RES_LOG_LEVEL = activeLogLevel;
   const hooks = {
@@ -500,7 +544,23 @@ async function setupWorkerLoop(
   };
 
   const { reservoir, state } = await loadReservoirAndState(absDir);
-  const stopWatchingResync = watchChannelsForResync(absDir, reservoir, emit);
+
+  const detector = new ChangeDetector(absDir);
+  await detector.scanAll();
+  let fallbackScanTimer: ReturnType<typeof setInterval> | undefined;
+  const stopContentWatcher = detector.startWatching((watching) => {
+    if (!watching) {
+      fallbackScanTimer = setInterval(() => {
+        detector.scanAll().catch((err: unknown) => {
+          const message = err instanceof Error ? err.message : String(err);
+          emit("error", `[change-detector] scan failed: ${message}`);
+        });
+      }, FALLBACK_SCAN_INTERVAL_MS);
+    }
+  });
+
+  const sleeper = createCancellableSleep();
+  const stopWatchingResync = watchChannelsForResync(absDir, reservoir, emit, () => sleeper.wake());
 
   let stopping = false;
   const requestStop = (): void => {
@@ -509,6 +569,7 @@ async function setupWorkerLoop(
     }
     stopping = true;
     stopWatchingResync();
+    sleeper.wake();
     clearPidFile(absDir);
     persistWorkerStatus(absDir, state);
   };
@@ -517,6 +578,11 @@ async function setupWorkerLoop(
   const teardown = (): void => {
     unregisterShutdownHandlers();
     stopWatchingResync();
+    stopContentWatcher();
+    if (fallbackScanTimer !== undefined) {
+      clearInterval(fallbackScanTimer);
+    }
+    sleeper.dispose();
   };
 
   persistWorkerStatus(absDir, state);
@@ -524,7 +590,8 @@ async function setupWorkerLoop(
 
   return {
     absDir,
-    stepIntervalMs,
+    heartbeatIntervalMs,
+    sleeper,
     reservoir,
     state,
     emit,
@@ -558,7 +625,8 @@ export async function runBackgroundFetchWorkerLoop(
   try {
     await loopAndFetchWhileNotStopped(
       loop.absDir,
-      loop.stepIntervalMs,
+      loop.heartbeatIntervalMs,
+      loop.sleeper,
       loop.reservoir,
       loop.state,
       loop.emit,
