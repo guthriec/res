@@ -3,6 +3,7 @@ import { ChannelControllerImpl } from "./channel-controller";
 import { ContentParser } from "./content-parser";
 import { RelativePathHelper } from "./relative-path-helper";
 import type { ContentController } from "./interfaces";
+import type { ContentLockState, ParsedContentFile } from "./reservoir-internal-types";
 import { ReservoirError, ErrorCodes } from "./errors";
 
 export class ContentControllerImpl implements ContentController {
@@ -37,37 +38,80 @@ export class ContentControllerImpl implements ContentController {
         : undefined;
     const pageOffset = options.pageOffset ?? 0;
     const pageSize = options.pageSize;
+    const hasLockFilter = retained !== undefined || retainedBySet !== undefined;
 
     const results: ContentItem[] = [];
+    const candidates: Array<{ channelId: string; state: ContentLockState }> = [];
 
     for (const channel of channels) {
-      const parsedById = this.channelController.readContentFilesById(channel.id);
-      for (const state of this.channelController.loadMetadata(channel.id).items) {
+      const metadata = this.channelController.loadMetadata(channel.id);
+
+      if (!hasLockFilter) {
+        const parsedById = this.channelController.readContentFilesById(channel.id);
+        for (const state of metadata.items) {
+          const parsed = parsedById.get(state.id);
+          if (!parsed) continue;
+          results.push(this.buildContentItem(channel.id, state, parsed));
+        }
+        continue;
+      }
+
+      for (const state of metadata.items) {
         const isRetained = state.locks.length > 0;
         if (retained === true && !isRetained) continue;
         if (retained === false && isRetained) continue;
         if (retainedBySet && !state.locks.some((name) => retainedBySet.has(name))) continue;
-
-        const parsed = parsedById.get(state.id);
-        if (!parsed) continue;
-        const relativePath = this.relativePathHelper.toRelativePath(parsed.filePath);
-        results.push({
-          id: state.id,
-          channelId: channel.id,
-          title: ContentParser.inferTitleFromContent(parsed.content),
-          fetchedAt: state.fetchedAt,
-          locks: [...state.locks],
-          content: parsed.content,
-          filePath: relativePath,
-        });
+        candidates.push({ channelId: channel.id, state });
       }
     }
 
-    if (pageSize === undefined) {
-      return results.slice(pageOffset);
+    if (!hasLockFilter) {
+      if (pageSize === undefined) {
+        return results.slice(pageOffset);
+      }
+      return results.slice(pageOffset, pageOffset + pageSize);
     }
 
-    return results.slice(pageOffset, pageOffset + pageSize);
+    const page =
+      pageSize === undefined
+        ? candidates.slice(pageOffset)
+        : candidates.slice(pageOffset, pageOffset + pageSize);
+
+    for (const { channelId, state } of page) {
+      const parsed = this.channelController.readContentFileById(channelId, state.id);
+      if (!parsed) continue;
+      results.push(this.buildContentItem(channelId, state, parsed));
+    }
+
+    return results;
+  }
+
+  getContentById(channelId: string, contentId: string): ContentItem | null {
+    const parsed = this.channelController.readContentFileById(channelId, contentId);
+    if (!parsed) return null;
+
+    const state = this.channelController
+      .loadMetadata(channelId)
+      .items.find((item) => item.id === contentId);
+    if (!state) return null;
+
+    return this.buildContentItem(channelId, state, parsed);
+  }
+
+  private buildContentItem(
+    channelId: string,
+    state: ContentLockState,
+    parsed: ParsedContentFile,
+  ): ContentItem {
+    return {
+      id: state.id,
+      channelId,
+      title: ContentParser.inferTitleFromContent(parsed.content),
+      fetchedAt: state.fetchedAt,
+      locks: [...state.locks],
+      content: parsed.content,
+      filePath: this.relativePathHelper.toRelativePath(parsed.filePath),
+    };
   }
 
   listRetained(channelIds?: string[]): ContentItem[] {
@@ -114,7 +158,7 @@ export class ContentControllerImpl implements ContentController {
         .items.find((item) => item.id === contentId);
       if (!state) continue;
 
-      const parsed = this.channelController.readContentFilesById(channel.id).get(contentId);
+      const parsed = this.channelController.readContentFileById(channel.id, contentId);
       if (!parsed) {
         throw new ReservoirError(ErrorCodes.CONTENT_FILE_NOT_FOUND, `Content file not found for id ${contentId}`);
       }
@@ -122,15 +166,11 @@ export class ContentControllerImpl implements ContentController {
       const updatedContent = ContentParser.writeInlineFrontmatter(parsed.content, updates);
       this.channelController.writeContentById(channel.id, contentId, updatedContent);
 
-      return {
+      return this.buildContentItem(channel.id, state, {
         id: contentId,
-        channelId: channel.id,
-        title: ContentParser.inferTitleFromContent(updatedContent),
-        fetchedAt: state.fetchedAt,
-        locks: [...state.locks],
         content: updatedContent,
-        filePath: this.relativePathHelper.toRelativePath(parsed.filePath),
-      };
+        filePath: parsed.filePath,
+      });
     }
 
     throw new ReservoirError(ErrorCodes.CONTENT_NOT_FOUND, `Content not found: ${contentId}`);

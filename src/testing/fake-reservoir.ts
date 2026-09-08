@@ -117,6 +117,13 @@ class ContentControllerFake implements ContentController {
     return this.listContent({ channelIds, retained: true });
   }
 
+  getContentById(channelId: string, contentId: string): ContentItem | null {
+    const item = this.state.content.find(
+      (candidate) => candidate.channelId === channelId && candidate.id === contentId,
+    );
+    return item ? { ...item } : null;
+  }
+
   readContentFrontmatterMap(contentId: string): Record<string, string> {
     const item = this.state.content.find((candidate) => candidate.id === contentId);
     if (!item) {

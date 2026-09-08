@@ -186,9 +186,10 @@ export class ChannelControllerImpl implements ChannelController {
   readContentFilesById(channelId: string): Map<string, ParsedContentFile> {
     const parsedById = new Map<string, ParsedContentFile>();
     const metadataById = new Map(this.loadMetadata(channelId).items.map((item) => [item.id, item]));
+    const mapping = this.idAllocator.loadMappings();
 
     for (const state of metadataById.values()) {
-      const mappedPath = this.idAllocator.getFileForId(state.id);
+      const mappedPath = this.idAllocator.getFileForId(state.id, mapping);
       const candidate = mappedPath ?? state.filePath;
       if (!candidate) continue;
       const normalized = RelativePathHelper.normalizeRelativePath(candidate);
@@ -203,6 +204,25 @@ export class ChannelControllerImpl implements ChannelController {
     }
 
     return parsedById;
+  }
+
+  readContentFileById(channelId: string, contentId: string): ParsedContentFile | undefined {
+    const state = this.loadMetadata(channelId).items.find((item) => item.id === contentId);
+    if (!state) return undefined;
+
+    const mapping = this.idAllocator.loadMappings();
+    const mappedPath = this.idAllocator.getFileForId(state.id, mapping);
+    const candidate = mappedPath ?? state.filePath;
+    if (!candidate) return undefined;
+    const normalized = RelativePathHelper.normalizeRelativePath(candidate);
+    const absolutePath = path.join(this.directory, normalized);
+    if (!fs.existsSync(absolutePath) || !absolutePath.toLowerCase().endsWith(".md")) return undefined;
+    const raw = fs.readFileSync(absolutePath, "utf-8");
+    return {
+      id: state.id,
+      content: raw,
+      filePath: absolutePath,
+    };
   }
 
   writeContentById(channelId: string, contentId: string, content: string): string {
