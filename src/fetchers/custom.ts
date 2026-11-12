@@ -1,13 +1,96 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import { execFile } from "child_process";
-import { promisify } from "util";
+import { spawn } from "child_process";
 import { FetchedContent } from "../types";
 import { fetchParamObjectToCliArgs } from "../fetch-params";
 import { Fetcher } from "./types";
 
-const execFileAsync = promisify(execFile);
+/** Marks a fetcher that only a runner-aware host may execute, e.g. `<fetcher>.requires-runner`. */
+export const REQUIRES_RUNNER_SUFFIX = ".requires-runner";
+
+export const DEFAULT_CUSTOM_FETCHER_TIMEOUT_MS = 120_000;
+
+export interface CustomFetcherRunContext {
+  executablePath: string;
+  channelId: string;
+  fetchParams: Record<string, string> | undefined;
+  /** Working directory. The runner must leave its output in `<tempDir>/outs`. */
+  tempDir: string;
+  /** True when the fetcher is marked as needing a runner that understands it. */
+  requiresRunner: boolean;
+}
+
+/** Runs a custom fetcher so that its items end up in `<tempDir>/outs`. Throws on failure. */
+export type CustomFetcherRunner = (context: CustomFetcherRunContext) => Promise<void>;
+
+export interface CustomFetchOptions {
+  /** Replaces the default behavior of executing the fetcher as a process. */
+  runner?: CustomFetcherRunner;
+  /** Wall-clock limit for the default runner. */
+  timeoutMs?: number;
+}
+
+export interface ExecuteCustomFetcherOptions {
+  timeoutMs?: number;
+  /** Added to the process environment, after `RES_CHANNEL_ID`. */
+  env?: Record<string, string>;
+}
+
+/** Runs the fetcher as a process in `context.tempDir`. For runners that decide to allow that. */
+export function executeCustomFetcher(
+  context: CustomFetcherRunContext,
+  options: ExecuteCustomFetcherOptions = {},
+): Promise<void> {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_CUSTOM_FETCHER_TIMEOUT_MS;
+  return new Promise((resolve, reject) => {
+    const child = spawn(context.executablePath, fetchParamObjectToCliArgs(context.fetchParams), {
+      cwd: context.tempDir,
+      env: { ...process.env, RES_CHANNEL_ID: context.channelId, ...options.env },
+      stdio: ["ignore", "ignore", "pipe"],
+      detached: process.platform !== "win32",
+    });
+    let stderr = "";
+    child.stderr.on("data", (chunk: Buffer) => {
+      if (stderr.length < 4096) stderr += chunk.toString();
+    });
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killProcessTree(child.pid, () => child.kill("SIGKILL"));
+    }, timeoutMs);
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.on("close", (code, signal) => {
+      clearTimeout(timer);
+      if (timedOut) reject(new Error(`Custom fetcher timed out after ${timeoutMs} ms`));
+      else if (code === 0) resolve();
+      else reject(new Error(`Custom fetcher failed (${signal ?? `exit code ${code}`}): ${stderr.trim()}`));
+    });
+  });
+}
+
+function runDefault(context: CustomFetcherRunContext, timeoutMs: number): Promise<void> {
+  if (context.requiresRunner) {
+    return Promise.reject(
+      new Error(
+        `Custom fetcher '${path.basename(context.executablePath)}' requires a sandbox-capable host and cannot be run directly.`,
+      ),
+    );
+  }
+  return executeCustomFetcher(context, { timeoutMs });
+}
+
+function killProcessTree(pid: number | undefined, fallback: () => void): void {
+  try {
+    if (pid !== undefined && process.platform !== "win32") process.kill(-pid, "SIGKILL");
+    else fallback();
+  } catch {
+    fallback();
+  }
+}
 
 interface DiscoveredItem {
   markdownPath: string;
@@ -57,6 +140,7 @@ export async function fetchCustom(
   executablePath: string,
   channelId: string,
   fetchParams: Record<string, string> | undefined,
+  options: CustomFetchOptions = {},
 ): Promise<FetchedContent[]> {
   const executableAbsolutePath = path.resolve(executablePath);
   if (!fs.existsSync(executableAbsolutePath)) {
@@ -68,13 +152,16 @@ export async function fetchCustom(
   fs.mkdirSync(outsDir, { recursive: true });
 
   try {
-    await execFileAsync(executableAbsolutePath, fetchParamObjectToCliArgs(fetchParams), {
-      cwd: tempDir,
-      env: {
-        ...process.env,
-        RES_CHANNEL_ID: channelId,
-      },
-    });
+    const context: CustomFetcherRunContext = {
+      executablePath: executableAbsolutePath,
+      channelId,
+      fetchParams,
+      tempDir,
+      requiresRunner: fs.existsSync(executableAbsolutePath + REQUIRES_RUNNER_SUFFIX),
+    };
+    await (options.runner
+      ? options.runner(context)
+      : runDefault(context, options.timeoutMs ?? DEFAULT_CUSTOM_FETCHER_TIMEOUT_MS));
 
     const items = listMarkdownItems(outsDir).map((entry) => {
       const content = fs.readFileSync(entry.markdownPath, "utf-8");
@@ -96,10 +183,13 @@ export async function fetchCustom(
   }
 }
 
-export function createCustomFetcher(executablePath: string): Fetcher {
+export function createCustomFetcher(
+  executablePath: string,
+  options: CustomFetchOptions = {},
+): Fetcher {
   return {
     fetch(fetchParams, channelId, _options?: any) {
-      return fetchCustom(executablePath, channelId, fetchParams);
+      return fetchCustom(executablePath, channelId, fetchParams, options);
     },
   };
 }

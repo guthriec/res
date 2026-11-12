@@ -11,6 +11,7 @@ import { FetchOrchestrator } from "./fetch-orchestrator";
 import { FilesystemSynchronizer } from "./filesystem-synchronizer";
 import type { Reservoir } from "./interfaces";
 import { ReservoirError, ErrorCodes } from "./errors";
+import type { CustomFetcherRunner } from "./fetchers/custom";
 
 const CONFIG_FILE = ".res-config.json";
 const RES_METADATA_DIR = ".res";
@@ -27,7 +28,11 @@ export class ReservoirImpl implements Reservoir {
   private readonly fetchOrchestrator: FetchOrchestrator;
   private readonly filesystemSynchronizer: FilesystemSynchronizer;
 
-  constructor(dir: string) {
+  /**
+   * `customFetcherRunner` replaces how custom fetchers are executed, so a host can
+   * decide whether and how each one may run. Without it they run as plain processes.
+   */
+  constructor(dir: string, options: { customFetcherRunner?: CustomFetcherRunner } = {}) {
     this.dir = path.resolve(dir);
     this.config = {};
     this.idAllocator = ContentIdAllocator.forReservoir(this.dir);
@@ -45,6 +50,7 @@ export class ReservoirImpl implements Reservoir {
       idAllocator: this.idAllocator,
       channelController: this.channelController,
       syncContentTracking: () => this.syncContentTracking(),
+      ...(options.customFetcherRunner ? { customFetcherRunner: options.customFetcherRunner } : {}),
     });
     this.filesystemSynchronizer = new FilesystemSynchronizer({
       reservoirDir: this.dir,

@@ -572,6 +572,51 @@ describe("fetchChannel", () => {
 
 // ─── addFetcher ───────────────────────────────────────────────────────────────
 
+describe("custom fetcher runner", () => {
+  function registerFetcher(name: string): string {
+    const fetchersDir = path.join(tmpDir, "res", "fetchers");
+    fs.mkdirSync(fetchersDir, { recursive: true });
+    const fetcherPath = path.join(fetchersDir, name);
+    fs.writeFileSync(fetcherPath, "not executable");
+    return fetcherPath;
+  }
+
+  it("runs custom fetchers through the runner the reservoir was created with", async () => {
+    registerFetcher("sandboxed.js");
+    const calls: string[] = [];
+    const res = new ReservoirImpl(tmpDir, {
+      customFetcherRunner: async ({ channelId, tempDir }) => {
+        calls.push(channelId);
+        fs.writeFileSync(path.join(tempDir, "outs", "item.md"), "# From runner");
+      },
+    }).initialize();
+    const ch = await res.channelController.addChannel({
+      name: "C",
+      fetchMethod: "sandboxed.js",
+      fetchParams: {},
+    });
+
+    const items = await res.fetchChannel(ch.id);
+
+    expect(calls).toEqual([ch.id]);
+    expect(items).toHaveLength(1);
+  });
+
+  it("refuses a marked fetcher when the reservoir has no runner", async () => {
+    const fetcherPath = registerFetcher("sandboxed.js");
+    fs.writeFileSync(`${fetcherPath}.requires-runner`, "");
+    fs.chmodSync(fetcherPath, 0o755);
+    const res = makeReservoir();
+    const ch = await res.channelController.addChannel({
+      name: "C",
+      fetchMethod: "sandboxed.js",
+      fetchParams: {},
+    });
+
+    await expect(res.fetchChannel(ch.id)).rejects.toThrow("requires a sandbox-capable host");
+  });
+});
+
 describe("addFetcher", () => {
   function assertAddFetcherError(
     res: Reservoir,

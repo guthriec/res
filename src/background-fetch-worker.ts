@@ -11,6 +11,7 @@ import {
 } from "./background-fetch-scheduler";
 import { Channel } from "./types";
 import { ReservoirImpl } from "./reservoir";
+import type { CustomFetcherRunner } from "./fetchers/custom";
 import { Logger, type LogLevel } from "./logger";
 
 const FETCHER_PID_FILE = ".res-fetcher.pid";
@@ -85,6 +86,8 @@ export interface BackgroundFetchWorkerRuntimeOptions {
   logLevel?: LogLevel;
   onFetchSuccess?: (channelId: string, affectedIds: string[]) => void;
   onFetchError?: (channelId: string, message: string) => void;
+  /** Replaces how custom fetchers are executed; see `ReservoirImpl`. */
+  customFetcherRunner?: CustomFetcherRunner;
 }
 
 /**
@@ -357,11 +360,14 @@ function createWorkerEmitter(options: BackgroundFetchWorkerRuntimeOptions): {
   return { activeLogLevel, emit };
 }
 
-async function loadReservoirAndState(absDir: string): Promise<{
+async function loadReservoirAndState(
+  absDir: string,
+  customFetcherRunner: CustomFetcherRunner | undefined,
+): Promise<{
   reservoir: ReservoirImpl;
   state: BackgroundFetchWorkerState;
 }> {
-  const reservoir = new ReservoirImpl(absDir).load();
+  const reservoir = new ReservoirImpl(absDir, customFetcherRunner ? { customFetcherRunner } : {}).load();
   await reservoir.syncContentTracking();
 
   const existing = readBackgroundFetchWorkerStatusFile(absDir);
@@ -543,7 +549,7 @@ async function setupWorkerLoop(
     onFetchError: options.onFetchError,
   };
 
-  const { reservoir, state } = await loadReservoirAndState(absDir);
+  const { reservoir, state } = await loadReservoirAndState(absDir, options.customFetcherRunner);
 
   const detector = new ChangeDetector(absDir);
   await detector.scanAll();

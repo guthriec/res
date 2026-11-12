@@ -3,7 +3,7 @@ import * as path from "path";
 import { createHash } from "crypto";
 import { ContentItem, FetchedContent } from "./types";
 import { getBuiltinFetcher } from "./fetchers";
-import { createCustomFetcher } from "./fetchers/custom";
+import { createCustomFetcher, type CustomFetcherRunner } from "./fetchers/custom";
 import { Fetcher } from "./fetchers/types";
 import { ContentIdAllocator } from "./content-id-allocator";
 import { InputNormalizer } from "./input-normalizer";
@@ -27,6 +27,7 @@ interface FetchOrchestratorDependencies {
   idAllocator: ContentIdAllocator;
   channelController: ChannelControllerImpl;
   syncContentTracking: () => Promise<void>;
+  customFetcherRunner?: CustomFetcherRunner;
 }
 
 export class FetchOrchestrator {
@@ -36,6 +37,7 @@ export class FetchOrchestrator {
   private readonly channelController: ChannelControllerImpl;
   private readonly syncContentTracking: () => Promise<void>;
   private readonly relativePathHelper: RelativePathHelper;
+  private readonly customFetcherRunner: CustomFetcherRunner | undefined;
 
   constructor(deps: FetchOrchestratorDependencies) {
     this.reservoirDir = path.resolve(deps.reservoirDir);
@@ -43,6 +45,7 @@ export class FetchOrchestrator {
     this.idAllocator = deps.idAllocator;
     this.channelController = deps.channelController;
     this.syncContentTracking = deps.syncContentTracking;
+    this.customFetcherRunner = deps.customFetcherRunner;
     this.relativePathHelper = new RelativePathHelper(deps.reservoirDir);
   }
 
@@ -276,7 +279,10 @@ export class FetchOrchestrator {
 
     const customPath = path.join(this.customFetchersDirectory, fetchMethod);
     if (fs.existsSync(customPath)) {
-      return createCustomFetcher(customPath);
+      return createCustomFetcher(
+        customPath,
+        this.customFetcherRunner ? { runner: this.customFetcherRunner } : {},
+      );
     }
 
     return undefined;
