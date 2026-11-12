@@ -673,6 +673,42 @@ describe("startBackgroundFetchWorker / stopBackgroundFetchWorker / getBackground
     }
   });
 
+  it("runs custom fetchers through the customFetcherRunner it was started with", async () => {
+    const reservoir = new Reservoir(tmpDir).initialize();
+    const executablePath = createFixtureCustomFetcherExecutable(tmpDir);
+    const registered = reservoir.addFetcher(executablePath);
+    fs.writeFileSync(path.join(tmpDir, "res", "fetchers", `${registered.name}.requires-runner`), "");
+    const channel = await reservoir.channelController.addChannel({
+      name: "Runner Channel",
+      fetchMethod: registered.name,
+      refreshInterval: 1,
+    });
+
+    const runnerChannels: string[] = [];
+    const onFetchSuccess = vi.fn();
+    const startPromise = startBackgroundFetchWorker(tmpDir, {
+      logLevel: "silent",
+      logger: () => undefined,
+      errorLogger: () => undefined,
+      onFetchSuccess,
+      customFetcherRunner: async ({ channelId, tempDir }) => {
+        runnerChannels.push(channelId);
+        fs.writeFileSync(path.join(tempDir, "outs", "item.md"), "# Item");
+      },
+    });
+
+    try {
+      await waitForWorkerOpportunity();
+      await waitForHookCalls(() => onFetchSuccess.mock.calls.length);
+      expect(runnerChannels).toContain(channel.id);
+    } finally {
+      const result = stopBackgroundFetchWorker(tmpDir);
+      if (result.stopped) {
+        await startPromise;
+      }
+    }
+  });
+
   it("invokes onFetchError hook when a channel fetch fails", async () => {
     const reservoir = new Reservoir(tmpDir).initialize();
     const executablePath = createFailingCustomFetcherExecutable(tmpDir);

@@ -1101,6 +1101,90 @@ describe("fetchCustom", () => {
     expect(items).toHaveLength(1);
     expect(items[0].content).toContain("url=https://example.com/feed");
   });
+
+  describe("with a custom runner", () => {
+    beforeEach(() => {
+      fs.writeFileSync(executablePath, "not executed");
+    });
+
+    it("hands the runner the executable, channel, params and a temp dir, then ingests outs", async () => {
+      const seen: Array<Record<string, unknown>> = [];
+      const runner = async (context: {
+        executablePath: string;
+        channelId: string;
+        fetchParams: Record<string, string> | undefined;
+        tempDir: string;
+        requiresRunner: boolean;
+      }) => {
+        seen.push({ ...context });
+        fs.writeFileSync(path.join(context.tempDir, "outs", "from-runner.md"), "# From runner");
+      };
+
+      const { fetchCustom } = await import("../src/fetchers/custom");
+      const items = await fetchCustom(executablePath, "chan-9", { a: "1" }, { runner });
+
+      expect(items.map((i) => i.sourceFileName)).toEqual(["from-runner.md"]);
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toMatchObject({
+        executablePath: path.resolve(executablePath),
+        channelId: "chan-9",
+        fetchParams: { a: "1" },
+        requiresRunner: false,
+      });
+      expect(fs.existsSync(seen[0].tempDir as string)).toBe(false);
+    });
+
+    it("fails the fetch and cleans up when the runner throws", async () => {
+      let tempDir = "";
+      const runner = async (context: { tempDir: string }) => {
+        tempDir = context.tempDir;
+        throw new Error("sandbox refused");
+      };
+
+      const { fetchCustom } = await import("../src/fetchers/custom");
+      await expect(fetchCustom(executablePath, "chan-9", undefined, { runner })).rejects.toThrow(
+        "sandbox refused",
+      );
+      expect(fs.existsSync(tempDir)).toBe(false);
+    });
+
+    it("tells the runner when the fetcher is marked as requiring one", async () => {
+      fs.writeFileSync(`${executablePath}.requires-runner`, "");
+      let requiresRunner: boolean | undefined;
+      const runner = async (context: { requiresRunner: boolean }) => {
+        requiresRunner = context.requiresRunner;
+      };
+
+      const { fetchCustom } = await import("../src/fetchers/custom");
+      await fetchCustom(executablePath, "chan-9", undefined, { runner });
+      expect(requiresRunner).toBe(true);
+    });
+  });
+
+  it("refuses to execute a fetcher marked as requiring a runner when none is installed", async () => {
+    fs.writeFileSync(executablePath, "#!/bin/sh\ntouch ran-marker\n");
+    fs.chmodSync(executablePath, 0o755);
+    fs.writeFileSync(`${executablePath}.requires-runner`, "");
+
+    const { fetchCustom } = await import("../src/fetchers/custom");
+    await expect(fetchCustom(executablePath, "chan-3", undefined)).rejects.toThrow(
+      "requires a sandbox-capable host",
+    );
+    expect(fs.existsSync(path.join(tmpDir, "ran-marker"))).toBe(false);
+  });
+
+  it("stops a default-runner executable that exceeds the timeout", async () => {
+    if (process.platform === "win32") return;
+    fs.writeFileSync(executablePath, "#!/bin/sh\nsleep 30\n");
+    fs.chmodSync(executablePath, 0o755);
+
+    const { fetchCustom } = await import("../src/fetchers/custom");
+    const started = Date.now();
+    await expect(
+      fetchCustom(executablePath, "chan-3", undefined, { timeoutMs: 300 }),
+    ).rejects.toThrow();
+    expect(Date.now() - started).toBeLessThan(10_000);
+  });
 });
 
 // ─── RSS blocked backoff end-to-end (real reservoir) ─────────────────────────
@@ -1177,5 +1261,26 @@ describe("RSS blocked backoff persistence", () => {
     const articleTwo = items.find((item) => item.content.includes("url: https://example.com/2"));
     expect(articleTwo?.content).toContain("Fetched body");
     expect(articleTwo?.content).toContain("## Full Content");
+  });
+});
+
+describe("executeCustomFetcher", () => {
+  it("runs a marked fetcher with extra environment variables when a runner chooses to", async () => {
+    if (process.platform === "win32") return;
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "res-exec-test-"));
+    try {
+      const executablePath = path.join(dir, "fetcher.sh");
+      fs.writeFileSync(executablePath, '#!/bin/sh\nmkdir -p outs\necho "$EXTRA_VALUE" > outs/item.md\n');
+      fs.chmodSync(executablePath, 0o755);
+      fs.writeFileSync(`${executablePath}.requires-runner`, "");
+
+      const { fetchCustom, executeCustomFetcher } = await import("../src/fetchers/custom");
+      const items = await fetchCustom(executablePath, "chan-1", undefined, {
+        runner: (context) => executeCustomFetcher(context, { env: { EXTRA_VALUE: "from-env" } }),
+      });
+      expect(items[0].content).toContain("from-env");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

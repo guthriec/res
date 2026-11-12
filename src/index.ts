@@ -23,6 +23,14 @@ export { ContentIdAllocator } from "./content-id-allocator";
 export { fetchRSS } from "./fetchers/rss";
 export { fetchWebPage } from "./fetchers/webpage";
 export { fetchCustom } from "./fetchers/custom";
+export type {
+  CustomFetcherRunner,
+  CustomFetcherRunContext,
+  CustomFetchOptions,
+} from "./fetchers/custom";
+export { REQUIRES_RUNNER_SUFFIX, executeCustomFetcher } from "./fetchers/custom";
+export type { ExecuteCustomFetcherOptions } from "./fetchers/custom";
+export { resolveCustomFetchersDirectory } from "./custom-fetcher-config-util";
 export type { Fetcher, FetchParams } from "./fetchers/types";
 export {
   getBackgroundFetchWorkerStatus,
